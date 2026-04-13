@@ -1,0 +1,40 @@
+name: Daily Pipeline Update
+
+on:
+  schedule:
+    - cron: '0 12 * * *'   # 9:00 AM Santiago (CLT = UTC-3)
+  workflow_dispatch:         # también permite correrlo manualmente desde GitHub
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          DUNE_API_KEY: ${{ secrets.DUNE_API_KEY }}
+        run: |
+          python pipeline.py \
+            --wallets wallets/clientes.xlsx \
+            --pref-csv wallets/Preferentes.csv \
+            --retail-csv wallets/Retail.csv
+
+      - name: Commit processed data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/processed/
+          git diff --staged --quiet || git commit -m "data: auto-update $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push

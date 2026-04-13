@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.env.*
+*.log
+
+# Raw Dune CSVs (se regeneran desde la API, no hace falta versionar)
+data/raw/
+
+# Archivos temporales de Python/OS
+.DS_Store
+*.ipynb_checkpoints
