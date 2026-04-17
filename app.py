@@ -217,51 +217,58 @@ def render_sidebar(ws: pd.DataFrame) -> dict:
 # ─── OVERVIEW ─────────────────────────────────────────────────────────────────
 
 def render_overview(ws: pd.DataFrame):
-    rem   = ws["total_balance_usd"].sum()
-    out   = ws["total_outflow_usd"].sum()
+    # Excluir "sin saldo en BDD" de métricas principales
+    NO_BAL_STATUS = "Sin saldo (sin retiro detectado)"
+    ws_real = ws[ws["status"] != NO_BAL_STATUS]
+    n_sin_saldo = (ws["status"] == NO_BAL_STATUS).sum()
+
+    rem   = ws_real["total_balance_usd"].sum()
+    out   = ws_real["total_outflow_usd"].sum()
     aum   = rem + out
     p_out = pct(out, aum)
     p_rem = pct(rem, aum)
 
-    n_total    = len(ws)
-    n_active   = (ws["total_balance_usd"] > 1).sum()
-    n_done     = (ws["status"] == "Retirado completamente").sum()
-    n_partial  = (ws["status"] == "Retiro parcial").sum()
-    n_inactive = (ws["status"] == "Sin movimiento").sum()
+    n_total    = len(ws_real)
+    n_active   = (ws_real["total_balance_usd"] > 1).sum()
+    n_done     = (ws_real["status"] == "Retirado completamente").sum()
+    n_partial  = (ws_real["status"] == "Retiro parcial").sum()
+    n_inactive = (ws_real["status"] == "Sin movimiento").sum()
 
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        st.markdown(f"""
-        <div class="card">
-            <div class="t-label">Retirado</div>
-            <div class="t-value-lg c-red">{fmt(out)}</div>
-            {track(p_out, "track-fill-red")}
-            <div class="t-sub"><span class="t-accent c-red">{p_out:.1f}%</span> del AUM estimado ({fmt(aum)})</div>
-        </div>""", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='card'>"
+            f"<div class='t-label'>Retirado</div>"
+            f"<div class='t-value-lg c-red'>{fmt(out)}</div>"
+            f"{track(p_out, 'track-fill-red')}"
+            f"<div class='t-sub'><span class='t-accent c-red'>{p_out:.1f}%</span> del AUM estimado ({fmt(aum)})</div>"
+            f"</div>", unsafe_allow_html=True)
 
     with c2:
-        st.markdown(f"""
-        <div class="card">
-            <div class="t-label">Remanente en plataforma</div>
-            <div class="t-value-lg c-green">{fmt(rem)}</div>
-            {track(p_rem, "track-fill-green")}
-            <div class="t-sub"><span class="t-accent c-green">{p_rem:.1f}%</span> aún sin retirar</div>
-        </div>""", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='card'>"
+            f"<div class='t-label'>Remanente en plataforma</div>"
+            f"<div class='t-value-lg c-green'>{fmt(rem)}</div>"
+            f"{track(p_rem, 'track-fill-green')}"
+            f"<div class='t-sub'><span class='t-accent c-green'>{p_rem:.1f}%</span> aún sin retirar</div>"
+            f"</div>", unsafe_allow_html=True)
 
     with c3:
         p_done = pct(n_done, n_total)
-        st.markdown(f"""
-        <div class="card">
-            <div class="t-label">Wallets · Estado</div>
-            <div class="t-value-lg">{n_active}<span style="font-size:16px;color:#4B5675"> / {n_total}</span></div>
-            {track(p_done, "track-fill-red")}
-            <div class="t-sub">
-                <span class="dot-red">●</span> {n_done} retirados ({p_done:.0f}%)&ensp;
-                <span class="dot-yellow">●</span> {n_partial} parcial&ensp;
-                <span class="dot-dim">●</span> {n_inactive} sin mov.
-            </div>
-        </div>""", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='card'>"
+            f"<div class='t-label'>Wallets retiradas · Total con actividad</div>"
+            f"<div class='t-value-lg c-red'>{n_done}<span style='font-size:16px;color:#4B5675'> / {n_total}</span></div>"
+            f"{track(p_done, 'track-fill-red')}"
+            f"<div class='t-sub'>"
+            f"<span class='dot-red'>●</span> {n_done} retirados ({p_done:.0f}%)&ensp;"
+            f"<span class='dot-yellow'>●</span> {n_partial} parcial&ensp;"
+            f"<span class='dot-dim'>●</span> {n_inactive} sin mov."
+            f"</div>"
+            f"<div style='margin-top:10px;padding-top:10px;border-top:1px solid #1C2333;font-size:11px;color:#2D3650'>"
+            f"+ {n_sin_saldo:,} clientes en BDD sin saldo histórico</div>"
+            f"</div>", unsafe_allow_html=True)
 
 
 # ─── SEGMENTS ─────────────────────────────────────────────────────────────────
@@ -448,15 +455,25 @@ TOKEN_META = {
     "WEB3":  ("WEB3",  "#10B981", True),
     "ADDY":  ("ADDY",  "#F59E0B", True),
     "ACAI":  ("ACAI",  "#EC4899", True),
-    "AAGG":  ("AAGG",  "#475569", False),
-    "AMOD":  ("AMOD / AP60", "#475569", False),
-    "ABAL":  ("ABAL",  "#475569", False),
+    "AAGG":  ("AAGG",  "#64748B", True),   # NAV calculado desde VAULT_POSITIONS
+    "AMOD":  ("AMOD / AP60", "#64748B", True),
+    "ABAL":  ("ABAL",  "#64748B", True),
 }
 
 
 def render_tokens(balances: pd.DataFrame, outflows: pd.DataFrame):
     if balances.empty:
         return
+
+    # Load latest supply
+    supply_path = PROCESSED_DIR / "supply.csv"
+    latest_supply = {}
+    if supply_path.exists():
+        sup = pd.read_csv(supply_path)
+        sup["day"] = pd.to_datetime(sup["day"], errors="coerce")
+        latest_supply = sup.sort_values("day").groupby("label")["supply"].last().to_dict()
+        # AMOD group: add AP60 supply to AMOD
+        latest_supply["AMOD"] = latest_supply.get("AMOD", 0) + latest_supply.pop("AP60", 0)
 
     st.markdown('<div class="section-title">Desglose por Token</div>', unsafe_allow_html=True)
 
@@ -527,6 +544,8 @@ def render_tokens(balances: pd.DataFrame, outflows: pd.DataFrame):
             pct_w = row["pct_wdn"]
             pct_r = 100 - pct_w
             with cols[i]:
+                supply_val = latest_supply.get(sym, 0)
+                supply_str = f"{supply_val:,.0f}" if supply_val > 0 else "—"
                 html = (
                     f"<div class='card' style='padding:14px 16px'>"
                     f"<div style='font-size:13px;font-weight:700;color:{color};letter-spacing:0.04em;margin-bottom:10px'>{name}</div>"
@@ -539,7 +558,10 @@ def render_tokens(balances: pd.DataFrame, outflows: pd.DataFrame):
                     f"<span style='font-size:10px;color:#4B5675'>{pct_w:.0f}% retirado</span>"
                     f"<span style='font-size:10px;color:#4B5675'>{int(row['holders'])} holders</span>"
                     f"</div>"
-                    f"<div style='font-size:10px;color:#2D3650;margin-top:6px'>${row['price_usd']:.4f} / token</div>"
+                    f"<div style='display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #111827'>"
+                    f"<span style='font-size:10px;color:#2D3650'>${row['price_usd']:.4f} / token</span>"
+                    f"<span style='font-size:10px;color:#2D3650'>Supply: {supply_str}</span>"
+                    f"</div>"
                     f"</div>"
                 )
                 st.markdown(html, unsafe_allow_html=True)
@@ -558,6 +580,8 @@ def render_tokens(balances: pd.DataFrame, outflows: pd.DataFrame):
             tot_tok = rem_tok + wdn_tok
             pct_w = row["withdrawn_tokens"] / tot_tok * 100 if tot_tok > 0 else 0
             with cols2[i]:
+                supply_val = latest_supply.get(sym, 0)
+                supply_str = f"{supply_val:,.0f}" if supply_val > 0 else "—"
                 html = (
                     f"<div class='card' style='padding:14px 16px;border-style:dashed'>"
                     f"<div style='font-size:13px;font-weight:700;color:{color};letter-spacing:0.04em;margin-bottom:4px'>{name}</div>"
@@ -570,6 +594,10 @@ def render_tokens(balances: pd.DataFrame, outflows: pd.DataFrame):
                     f"<div style='display:flex;justify-content:space-between;margin-top:4px'>"
                     f"<span style='font-size:10px;color:#2D3650'>{pct_w:.0f}% retirado</span>"
                     f"<span style='font-size:10px;color:#2D3650'>{int(row['holders'])} holders</span>"
+                    f"</div>"
+                    f"<div style='display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid #111827'>"
+                    f"<span style='font-size:10px;color:#2D3650'>Supply total</span>"
+                    f"<span style='font-size:10px;color:#2D3650'>{supply_str} tokens</span>"
                     f"</div>"
                     f"</div>"
                 )
@@ -667,7 +695,7 @@ def render_tokens(balances: pd.DataFrame, outflows: pd.DataFrame):
                         f"</tr>"
                     )
                 table_html += "</tbody></table>"
-                table_html += "<div style='font-size:11px;color:#2D3650;margin-top:8px;padding:8px 12px'>⚠️ Vault ERC-4626 — precio NAV no disponible, se muestra en tokens.</div>"
+                table_html += "<div style='font-size:11px;color:#2D3650;margin-top:8px;padding:8px 12px'>ℹ️ Vault ERC-4626 — precio NAV calculado desde posiciones on-chain (getPositions).</div>"
 
             st.markdown(table_html, unsafe_allow_html=True)
 
@@ -682,8 +710,8 @@ def render_tables(ws: pd.DataFrame, balances: pd.DataFrame, outflows: pd.DataFra
     n_unk = len(unknown[unknown["total_aum"] > 100]) if not unknown.empty else 0
     unk_label = f"⚠️ Sin registrar ({n_unk})" if n_unk > 0 else "Sin registrar"
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "Wallets", "Balances", "Retiros", "Análisis", "Pools", unk_label,
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "Wallets", "Balances", "Retiros", "Análisis", "Pools", unk_label, "🏛 Contratos Arch",
     ])
 
     fmt_style = {"total_balance_usd": "${:,.2f}", "total_outflow_usd": "${:,.2f}", "pct_withdrawn": "{:.1f}%"}
@@ -791,6 +819,41 @@ def render_tables(ws: pd.DataFrame, balances: pd.DataFrame, outflows: pd.DataFra
             )
         else:
             st.info("No se detectaron wallets desconocidas con saldo relevante.")
+
+    with tab7:
+        from config import ARCH_CONTRACTS_POLYGON
+        st.markdown(
+            "Direcciones de contratos y tokens internos de Arch. "
+            "**No se suman al AUM** — se muestran solo como referencia."
+        )
+        contracts_df = pd.DataFrame([
+            {"Dirección": addr, "Descripción": label}
+            for addr, label in ARCH_CONTRACTS_POLYGON.items()
+        ])
+        # Check if any appear in balances with holdings
+        bal_all = data.get("balances", pd.DataFrame())
+        if not bal_all.empty and "wallet_address" in bal_all.columns:
+            bal_contracts = bal_all[bal_all["wallet_address"].str.lower().isin(
+                contracts_df["Dirección"].str.lower()
+            )]
+            if not bal_contracts.empty:
+                agg = bal_contracts.groupby("wallet_address").agg(
+                    value_usd=("value_usd", "sum"),
+                    tokens=("symbol", lambda x: ", ".join(sorted(x.unique())))
+                ).reset_index()
+                contracts_df = contracts_df.merge(
+                    agg.rename(columns={"wallet_address": "Dirección"}),
+                    on="Dirección", how="left"
+                )
+                contracts_df["value_usd"] = contracts_df["value_usd"].fillna(0)
+                contracts_df["tokens"] = contracts_df["tokens"].fillna("—")
+                contracts_df = contracts_df.rename(columns={"value_usd": "Saldo USD", "tokens": "Tokens"})
+
+        poly_url = "https://polygonscan.com/address/"
+        contracts_df["Polygonscan"] = contracts_df["Dirección"].apply(
+            lambda a: f'<a href="{poly_url}{a}" target="_blank">{a[:10]}…</a>'
+        )
+        st.dataframe(contracts_df, use_container_width=True, height=600)
 
     with tab5:
         data = load_data()
