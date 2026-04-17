@@ -35,6 +35,41 @@ DUNE_QUERY_BALANCES_ETHEREUM = 6993356
 DUNE_QUERY_OUTFLOWS_ETHEREUM = 6993368
 
 # =============================================================================
+# PORTFOLIO VAULT POSITIONS (hardcoded desde getPositions() en Polygon)
+# Unidades de cada token subyacente por 1 token de portfolio.
+# NAV = sum(unidades_i * precio_i)
+# =============================================================================
+VAULT_POSITIONS = {
+    "AAGG": {
+        "CHAIN": 0.31000,
+        "AEDY":  0.43980,
+        "ABDY":  0.89180,
+        "WEB3":  0.23347,
+    },
+    "AMOD": {
+        "CHAIN": 0.34740,
+        "WEB3":  0.97760,
+        "ADDY":  0.90430,
+        "AEDY":  0.37299,
+        "ABDY":  0.21870,
+    },
+    "ABAL": {
+        "WEB3":  0.60100,
+        "CHAIN": 0.20742,
+        "ADDY":  0.29318,
+        "AEDY":  0.21994,
+        "ABDY":  0.13533,
+    },
+    "AP60": {  # legacy de AMOD — mismas posiciones
+        "CHAIN": 0.34740,
+        "WEB3":  0.97760,
+        "ADDY":  0.90430,
+        "AEDY":  0.37299,
+        "ABDY":  0.21870,
+    },
+}
+
+# =============================================================================
 # ARCH TOKENS - POLYGON (Archemist contracts = what clients hold)
 # =============================================================================
 ARCHEMIST_TOKENS_POLYGON = {

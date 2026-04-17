@@ -35,6 +35,7 @@ from config import (
     DUNE_API_BASE, DUNE_QUERY_PRICES, DUNE_QUERY_SUPPLY, DUNE_QUERY_POOLS,
     DUNE_QUERY_BALANCES_POLYGON, DUNE_QUERY_OUTFLOWS_POLYGON,
     DUNE_QUERY_BALANCES_ETHEREUM, DUNE_QUERY_OUTFLOWS_ETHEREUM,
+    VAULT_POSITIONS,
     classify_outflow_destination,
 )
 from dune_queries import (
@@ -364,7 +365,15 @@ def process_prices(df_prices: pd.DataFrame, df_pools: pd.DataFrame = None) -> di
         log.warning("No price data found in pools or price query. All USD values will be $0.")
         return {}
 
-    # --- Source 3: propagate to variants via SYMBOL_TO_BASE ---
+    # --- Source 3: NAV de tokens de portfolio (AAGG, AMOD, ABAL, AP60) ---
+    # NAV = sum(unidades_i * precio_i) usando posiciones hardcodeadas de getPositions()
+    for vault_sym, components in VAULT_POSITIONS.items():
+        nav = sum(units * prices.get(comp, 0) for comp, units in components.items())
+        if nav > 0:
+            prices[vault_sym] = nav
+            log.info(f"Vault NAV: {vault_sym} = ${nav:.4f}")
+
+    # --- Source 4: propagate to variants via SYMBOL_TO_BASE ---
     # e.g. WEB3_PROD → WEB3 price, ABDY_V1 → ABDY price, CHAIN_SET → CHAIN price
     extended = {}
     for sym, base in SYMBOL_TO_BASE.items():
