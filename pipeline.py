@@ -35,7 +35,6 @@ from config import (
     DUNE_API_BASE, DUNE_QUERY_PRICES, DUNE_QUERY_SUPPLY, DUNE_QUERY_POOLS,
     DUNE_QUERY_BALANCES_POLYGON, DUNE_QUERY_OUTFLOWS_POLYGON,
     DUNE_QUERY_BALANCES_ETHEREUM, DUNE_QUERY_OUTFLOWS_ETHEREUM,
-    VAULT_POSITIONS,
     classify_outflow_destination,
 )
 from dune_queries import (
@@ -275,34 +274,6 @@ def extract_via_api(dune: DuneClient) -> dict:
             log.error(f"  ✗ Failed {name} (query {query_id}): {e}")
             results[name] = pd.DataFrame()
 
-    # NAV prices for portfolio vault tokens (AAGG, AMOD, ABAL, AP60)
-    # Requires creating a query in Dune UI and setting DUNE_QUERY_VAULT_NAV in config.py
-    # SQL to use (create at dune.com/queries/new):
-    #
-    #   SELECT symbol, contract_address, price AS nav_usd
-    #   FROM prices.usd
-    #   WHERE blockchain = 'polygon'
-    #   AND contract_address IN (
-    #     0xafb6e8331355fae99c8e8953bb4c6dc5d11e9f3c,
-    #     0xa5a979aa7f55798e99f91abe815c114a09164beb,
-    #     0xf401e2c1ce8f252947b60bfb92578f84217a1545,
-    #     0x6ca9c891ba6a034d7553a97a7b7a55c3ce04b15c
-    #   )
-    #   AND minute >= NOW() - interval '2 hours'
-    #   ORDER BY minute DESC
-    #   LIMIT 10
-    #
-    if DUNE_QUERY_VAULT_NAV:
-        try:
-            log.info(f"--- Fetching vault NAV prices (query {DUNE_QUERY_VAULT_NAV}) ---")
-            results["vault_nav"] = dune.run_query_id(DUNE_QUERY_VAULT_NAV)
-            log.info(f"  ✓ vault_nav: {len(results['vault_nav'])} rows")
-        except Exception as e:
-            log.warning(f"  ✗ vault_nav failed: {e}")
-            results["vault_nav"] = pd.DataFrame()
-    else:
-        log.info("DUNE_QUERY_VAULT_NAV not set — vault NAV will be computed from hardcoded VAULT_POSITIONS")
-
     # Save all as raw CSVs
     for name, df in results.items():
         if not df.empty:
@@ -338,15 +309,15 @@ def extract_via_csv(csv_dir: str) -> dict:
 # =============================================================================
 # 4. DATA PROCESSING
 # =============================================================================
-def process_prices(df_prices: pd.DataFrame, df_pools: pd.DataFrame = None, df_vault_nav: pd.DataFrame = None) -> dict:
+def process_prices(df_prices: pd.DataFrame, df_pools: pd.DataFrame = None) -> dict:
     """
     Process prices into a symbol -> USD price dict.
 
     Sources (in order of priority):
-    1. Pools data (query 3591853): most reliable for the 6 Archemist tokens.
-    2. Price query (6963204): supplement for missing tokens.
-    3. Vault NAV query (DUNE_QUERY_VAULT_NAV): NAV for AAGG, AMOD, ABAL, AP60.
-    4. SYMBOL_TO_BASE propagation: extends to _PROD, _V1, _SET variants.
+    1. Pools data (query 3591853): columns 'token' and 'price' — most reliable,
+       covers all 6 base Archemist tokens (WEB3, CHAIN, ACAI, ABDY, ADDY, AEDY).
+    2. Price query (6963204): columns 'address' and 'precio' — maps Archemist addresses.
+    3. SYMBOL_TO_BASE propagation: extends prices to _PROD, _V1, _SET variants.
     """
     prices = {}
 
@@ -393,20 +364,7 @@ def process_prices(df_prices: pd.DataFrame, df_pools: pd.DataFrame = None, df_va
         log.warning("No price data found in pools or price query. All USD values will be $0.")
         return {}
 
-    # --- Source 3: vault NAV prices computed from hardcoded VAULT_POSITIONS ---
-    # NAV = sum(units_i × price_i) for each component token in the portfolio vault.
-    # Positions sourced from Polygonscan getPositions() — see config.VAULT_POSITIONS.
-    for vault_sym, components in VAULT_POSITIONS.items():
-        nav = sum(
-            units * prices.get(comp_sym, 0)
-            for comp_sym, units in components.items()
-        )
-        if nav > 0:
-            prices[vault_sym] = nav
-            log.info(f"  Vault NAV computed: {vault_sym} = ${nav:.4f} "
-                     f"(components: { {c: round(units * prices.get(c, 0), 4) for c, units in components.items()} })")
-
-    # --- Source 4: propagate to variants via SYMBOL_TO_BASE ---
+    # --- Source 3: propagate to variants via SYMBOL_TO_BASE ---
     # e.g. WEB3_PROD → WEB3 price, ABDY_V1 → ABDY price, CHAIN_SET → CHAIN price
     extended = {}
     for sym, base in SYMBOL_TO_BASE.items():
@@ -832,11 +790,10 @@ def run_pipeline(
             if key not in raw_data:
                 raw_data[key] = val
 
-    # 3. Process prices (pools → price query → vault NAV)
+    # 3. Process prices (use pools as primary source + price query as supplement)
     prices = process_prices(
         raw_data.get("prices", pd.DataFrame()),
         raw_data.get("pools", pd.DataFrame()),
-        raw_data.get("vault_nav", pd.DataFrame()),
     )
 
     # 4. Process balances
