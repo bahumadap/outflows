@@ -252,35 +252,72 @@ class DuneClient:
 # =============================================================================
 # 3. DATA EXTRACTION
 # =============================================================================
+def _cache_is_fresh(name: str, max_hours: float) -> bool:
+    """True si el CSV existe y fue modificado hace menos de max_hours."""
+    path = RAW_DIR / f"{name}.csv"
+    if not path.exists():
+        return False
+    age_hours = (datetime.now() - datetime.fromtimestamp(path.stat().st_mtime)).total_seconds() / 3600
+    return age_hours < max_hours
+
+
+# Queries que se ejecutan diario (precios y balances cambian frecuentemente)
+QUERIES_DAILY = [
+    ("pools",              DUNE_QUERY_POOLS),
+    ("balances_polygon",   DUNE_QUERY_BALANCES_POLYGON),
+    ("outflows_polygon",   DUNE_QUERY_OUTFLOWS_POLYGON),
+]
+
+# Queries que se ejecutan semanal (cambian poco)
+QUERIES_WEEKLY = [
+    ("prices",             DUNE_QUERY_PRICES),
+    ("supply",             DUNE_QUERY_SUPPLY),
+    ("balances_ethereum",  DUNE_QUERY_BALANCES_ETHEREUM),
+    ("outflows_ethereum",  DUNE_QUERY_OUTFLOWS_ETHEREUM),
+]
+
+
 def extract_via_api(dune: DuneClient) -> dict:
-    """Extract all data from Dune API using saved query IDs. Returns dict of DataFrames."""
+    """
+    Extract data from Dune API con caché inteligente:
+    - Queries diarias: se saltean si el CSV tiene < 20 horas
+    - Queries semanales: se saltean si el CSV tiene < 7 días
+    Esto ahorra créditos de Dune en runs consecutivos del mismo día.
+    """
     results = {}
 
-    queries = [
-        ("prices",             DUNE_QUERY_PRICES),
-        ("supply",             DUNE_QUERY_SUPPLY),
-        ("pools",              DUNE_QUERY_POOLS),
-        ("balances_polygon",   DUNE_QUERY_BALANCES_POLYGON),
-        ("outflows_polygon",   DUNE_QUERY_OUTFLOWS_POLYGON),
-        ("balances_ethereum",  DUNE_QUERY_BALANCES_ETHEREUM),
-        ("outflows_ethereum",  DUNE_QUERY_OUTFLOWS_ETHEREUM),
+    all_queries = [
+        *[(name, qid, 20)   for name, qid in QUERIES_DAILY],   # max 20h
+        *[(name, qid, 168)  for name, qid in QUERIES_WEEKLY],  # max 7 días
     ]
 
-    for name, query_id in queries:
+    for name, query_id, max_hours in all_queries:
+        path = RAW_DIR / f"{name}.csv"
+
+        # ── Usar caché si está fresco ──────────────────────────────────────
+        if _cache_is_fresh(name, max_hours):
+            cached = pd.read_csv(path)
+            results[name] = cached
+            log.info(f"  ✓ {name}: usando caché ({len(cached)} rows, < {max_hours}h)")
+            continue
+
+        # ── Llamar a Dune ──────────────────────────────────────────────────
         try:
-            log.info(f"--- Executing query {query_id} ({name}) ---")
-            results[name] = dune.run_query_id(query_id)
-            log.info(f"  ✓ {name}: {len(results[name])} rows")
+            log.info(f"--- Ejecutando query {query_id} ({name}) ---")
+            df = dune.run_query_id(query_id)
+            results[name] = df
+            log.info(f"  ✓ {name}: {len(df)} rows desde Dune")
+            if not df.empty:
+                df.to_csv(path, index=False)
+                log.info(f"  Guardado {name} -> {path}")
         except Exception as e:
             log.error(f"  ✗ Failed {name} (query {query_id}): {e}")
-            results[name] = pd.DataFrame()
-
-    # Save all as raw CSVs
-    for name, df in results.items():
-        if not df.empty:
-            path = RAW_DIR / f"{name}.csv"
-            df.to_csv(path, index=False)
-            log.info(f"  Saved {name} -> {path} ({len(df)} rows)")
+            # Si falla Dune pero hay caché (aunque vieja), úsala como fallback
+            if path.exists():
+                results[name] = pd.read_csv(path)
+                log.warning(f"  ↩ Usando caché vieja para {name} como fallback")
+            else:
+                results[name] = pd.DataFrame()
 
     return results
 
