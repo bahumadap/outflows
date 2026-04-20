@@ -54,6 +54,34 @@ PROCESSED_DIR = DATA_DIR / "processed"
 for d in [RAW_DIR, PROCESSED_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
+# Archivos que guardan el último timestamp procesado por red
+LAST_TS_FILE = {
+    "polygon":  RAW_DIR / "last_outflow_ts_polygon.txt",
+    "ethereum": RAW_DIR / "last_outflow_ts_ethereum.txt",
+}
+
+
+def _load_last_ts(network: str) -> str:
+    """Lee el último timestamp de outflows procesado. Si no existe, usa CUTOFF_DATE."""
+    path = LAST_TS_FILE[network]
+    if path.exists():
+        ts = path.read_text().strip()
+        log.info(f"  Último timestamp outflows ({network}): {ts}")
+        return ts
+    return f"{CUTOFF_DATE} 00:00:00"
+
+
+def _save_last_ts(network: str, df: pd.DataFrame):
+    """Guarda el max(block_time) de los nuevos outflows como próximo punto de partida."""
+    if df.empty or "block_time" not in df.columns:
+        return
+    max_ts = pd.to_datetime(df["block_time"], errors="coerce").max()
+    if pd.isna(max_ts):
+        return
+    ts_str = max_ts.strftime("%Y-%m-%d %H:%M:%S")
+    LAST_TS_FILE[network].write_text(ts_str)
+    log.info(f"  Guardado nuevo timestamp ({network}): {ts_str}")
+
 
 # =============================================================================
 # 1. WALLET LOADER
@@ -286,22 +314,19 @@ def extract_via_api(dune: DuneClient) -> dict:
     """
     results = {}
 
-    all_queries = [
+    # ── Queries con caché (no incrementales) ─────────────────────────────
+    cached_queries = [
         *[(name, qid, 20)   for name, qid in QUERIES_DAILY],   # max 20h
         *[(name, qid, 168)  for name, qid in QUERIES_WEEKLY],  # max 7 días
     ]
 
-    for name, query_id, max_hours in all_queries:
+    for name, query_id, max_hours in cached_queries:
         path = RAW_DIR / f"{name}.csv"
-
-        # ── Usar caché si está fresco ──────────────────────────────────────
         if _cache_is_fresh(name, max_hours):
             cached = pd.read_csv(path)
             results[name] = cached
-            log.info(f"  ✓ {name}: usando caché ({len(cached)} rows, < {max_hours}h)")
+            log.info(f"  ✓ {name}: caché fresca ({len(cached)} rows, < {max_hours}h)")
             continue
-
-        # ── Llamar a Dune ──────────────────────────────────────────────────
         try:
             log.info(f"--- Ejecutando query {query_id} ({name}) ---")
             df = dune.run_query_id(query_id)
@@ -309,15 +334,56 @@ def extract_via_api(dune: DuneClient) -> dict:
             log.info(f"  ✓ {name}: {len(df)} rows desde Dune")
             if not df.empty:
                 df.to_csv(path, index=False)
-                log.info(f"  Guardado {name} -> {path}")
         except Exception as e:
-            log.error(f"  ✗ Failed {name} (query {query_id}): {e}")
-            # Si falla Dune pero hay caché (aunque vieja), úsala como fallback
+            log.error(f"  ✗ Failed {name}: {e}")
+            results[name] = pd.read_csv(path) if path.exists() else pd.DataFrame()
             if path.exists():
-                results[name] = pd.read_csv(path)
-                log.warning(f"  ↩ Usando caché vieja para {name} como fallback")
+                log.warning(f"  ↩ Usando caché vieja para {name}")
+
+    # ── Outflows incrementales ────────────────────────────────────────────
+    # Solo pide transfers nuevos desde el último timestamp procesado.
+    # Acumula resultados en el CSV existente (no reemplaza).
+    incremental = [
+        ("outflows_polygon",  DUNE_QUERY_OUTFLOWS_POLYGON,  "polygon"),
+        ("outflows_ethereum", DUNE_QUERY_OUTFLOWS_ETHEREUM, "ethereum"),
+    ]
+
+    for name, query_id, network in incremental:
+        path = RAW_DIR / f"{name}.csv"
+        last_ts = _load_last_ts(network)
+        try:
+            log.info(f"--- Outflows incrementales {network} desde {last_ts} ---")
+            df_new = dune.run_query_id(query_id, params={"last_timestamp": last_ts})
+            log.info(f"  ✓ {name}: {len(df_new)} rows nuevos desde Dune")
+
+            # Acumular con los datos históricos existentes
+            if path.exists():
+                df_existing = pd.read_csv(path)
+                if not df_new.empty:
+                    df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+                    # Deduplicar por tx_hash si existe
+                    if "tx_hash" in df_combined.columns:
+                        df_combined = df_combined.drop_duplicates(subset=["tx_hash"])
+                    results[name] = df_combined
+                    df_combined.to_csv(path, index=False)
+                    log.info(f"  Acumulado: {len(df_combined)} rows totales en {name}")
+                else:
+                    results[name] = df_existing
+                    log.info(f"  Sin datos nuevos, usando existentes ({len(df_existing)} rows)")
             else:
-                results[name] = pd.DataFrame()
+                results[name] = df_new
+                if not df_new.empty:
+                    df_new.to_csv(path, index=False)
+
+            # Guardar nuevo timestamp solo si hubo datos nuevos
+            if not df_new.empty:
+                _save_last_ts(network, df_new)
+
+        except Exception as e:
+            log.error(f"  ✗ Failed {name}: {e}")
+            results[name] = pd.read_csv(path) if path.exists() else pd.DataFrame()
+            if path.exists():
+                log.warning(f"  ↩ Usando caché vieja para {name}")
 
     return results
 
