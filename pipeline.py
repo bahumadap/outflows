@@ -32,7 +32,7 @@ from config import (
     ARCH_CONTRACTS_POLYGON, ARCH_CONTRACTS_ETHEREUM,
     SYMBOL_TO_BASE, BURN_ADDRESS,
     CUTOFF_DATE, DUST_THRESHOLD_USD, DUST_THRESHOLD_TOKENS,
-    DUNE_API_BASE, DUNE_QUERY_SUPPLY, DUNE_QUERY_POOLS,
+    DUNE_API_BASE, DUNE_QUERY_SUPPLY_ETH, DUNE_QUERY_SUPPLY_POL, DUNE_QUERY_POOLS,
     DUNE_QUERY_BALANCES_POLYGON, DUNE_QUERY_OUTFLOWS_POLYGON,
     DUNE_QUERY_BALANCES_ETHEREUM, DUNE_QUERY_OUTFLOWS_ETHEREUM,
     VAULT_POSITIONS, GSHEET_PRICES_CSV, GSHEET_PRICE_COLUMNS,
@@ -321,7 +321,8 @@ QUERIES_DAILY = [
 # Queries que se ejecutan semanal (cambian poco)
 # Nota: precios ya no vienen de Dune — se obtienen del Google Sheet (gratis)
 QUERIES_WEEKLY = [
-    ("supply",             DUNE_QUERY_SUPPLY),
+    ("supply_eth",         DUNE_QUERY_SUPPLY_ETH),   # Supply Ethereum (tokens base)
+    ("supply_pol",         DUNE_QUERY_SUPPLY_POL),   # Supply Polygon (todos los tokens)
     ("balances_ethereum",  DUNE_QUERY_BALANCES_ETHEREUM),
 ]
 
@@ -381,9 +382,11 @@ def extract_via_api(dune: DuneClient) -> dict:
                 df_existing = pd.read_csv(path)
                 if not df_new.empty:
                     df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-                    # Deduplicar por tx_hash si existe
-                    if "tx_hash" in df_combined.columns:
-                        df_combined = df_combined.drop_duplicates(subset=["tx_hash"])
+                    # Deduplicar por (tx_hash, wallet_from, symbol) — NO solo tx_hash
+                    # porque una tx batch puede tener transfers de múltiples wallets/tokens
+                    dedup_cols = [c for c in ["tx_hash", "wallet_from", "symbol"] if c in df_combined.columns]
+                    if dedup_cols:
+                        df_combined = df_combined.drop_duplicates(subset=dedup_cols)
                     results[name] = df_combined
                     df_combined.to_csv(path, index=False)
                     log.info(f"  Acumulado: {len(df_combined)} rows totales en {name}")
@@ -717,8 +720,18 @@ def compute_wallet_summary(
             "last_outflow_date", "outflow_tokens"
         ])
 
-    # Merge (outer so fully-withdrawn wallets still appear from out_agg side)
-    summary = bal_agg.merge(out_agg, on="wallet_address", how="outer")
+    # Base: TODOS los wallets registrados (incluso los que retiraron antes del cutoff)
+    if df_wallets is not None and not df_wallets.empty:
+        base = df_wallets[["wallet_address", "customer_name", "email", "segment", "network"]].drop_duplicates("wallet_address")
+        summary = base.merge(bal_agg, on="wallet_address", how="left")
+        # Para columnas duplicadas de customer_name etc., usar las del CSV original
+        for col in ["customer_name", "email", "segment", "network"]:
+            if f"{col}_x" in summary.columns:
+                summary[col] = summary[f"{col}_x"].fillna(summary.get(f"{col}_y", ""))
+                summary = summary.drop(columns=[f"{col}_x", f"{col}_y"], errors="ignore")
+        summary = summary.merge(out_agg, on="wallet_address", how="left")
+    else:
+        summary = bal_agg.merge(out_agg, on="wallet_address", how="outer")
 
     # Fill NaN numerics
     summary["total_balance_usd"] = summary["total_balance_usd"].fillna(0)
@@ -809,102 +822,141 @@ def compute_global_metrics(wallet_summary: pd.DataFrame) -> dict:
 # 5b. RECONCILIACIÓN: supply × precio vs suma total de todos los holders
 # =============================================================================
 def compute_reconciliation(
-    df_supply: pd.DataFrame,
-    df_balances_all_raw: pd.DataFrame,   # todos los holders en Dune (sin filtrar)
-    df_balances_clients: pd.DataFrame,   # solo wallets de clientes monitoreados
+    df_supply: pd.DataFrame,             # supply total por token (de Dune)
+    df_balances_all_raw: pd.DataFrame,   # no usado (mantenido por compatibilidad)
+    df_balances_clients: pd.DataFrame,   # balances actuales de clientes registrados
     prices: dict,
+    df_outflows: pd.DataFrame = None,    # retiros de clientes registrados
 ) -> pd.DataFrame:
     """
-    Cruce contable completo por token:
-      market_cap  = supply_total × precio
-      all_holders = Σ(balance_i × precio) de TODOS los wallets on-chain (Dune raw)
-      client_usd  = Σ(balance_i × precio) solo clientes registrados
-      arch_usd    = all_holders - client_usd  (contratos, pools, Arch internal)
+    Desglose por token usando los MISMOS datos que el overview (balances + outflows de clientes).
+    Garantiza consistencia total: remanente aquí = remanente en la pantalla principal.
 
-    Checks:
-      • market_cap ≈ all_holders  → si difieren mucho hay error de supply o precio
-      • client_usd ≤ market_cap   → siempre debe cumplirse
-
-    A medida que el supply baja a 0, market_cap → 0 y todo el capital fue devuelto.
+    Columnas:
+      token         → símbolo base (WEB3, CHAIN, ABDY, etc.)
+      precio_usd    → precio actual
+      remanente_usd → lo que aún tienen los clientes (de balances.csv)
+      retirado_usd  → lo que ya retiraron desde el 1 Abr (de outflows.csv, sin internos)
+      historico_usd → remanente + retirado (AUM inicial estimado)
+      pct_retirado  → % ya retirado del histórico
+      alerta        → ✓ OK / ⚠️ si hay dato inconsistente
     """
-    if df_supply.empty or not prices:
+    if df_balances_clients.empty or not prices:
         return pd.DataFrame()
 
-    # ── 1. Supply más reciente por token ──────────────────────────────────────
-    sup = df_supply.copy()
-    sup["day"] = pd.to_datetime(sup["day"], errors="coerce")
-    latest_supply = (
-        sup.sort_values("day")
-        .groupby("label")["supply"]
-        .last()
+    # ── 1. Remanente por token (desde balances de clientes) ───────────────────
+    bal = df_balances_clients.copy()
+    if "base_symbol" not in bal.columns:
+        bal["base_symbol"] = bal["symbol"].map(SYMBOL_TO_BASE).fillna(bal["symbol"])
+
+    remanente = (
+        bal.groupby("base_symbol")
+        .agg(
+            remanente_tokens=("balance", "sum"),
+            remanente_usd=("value_usd", "sum"),
+            holders=("wallet_address", "nunique"),
+        )
         .reset_index()
-        .rename(columns={"label": "token", "supply": "supply_total"})
+        .rename(columns={"base_symbol": "token"})
     )
 
-    # ── 2. Todos los holders on-chain (Dune balances_polygon crudo) ───────────
-    # Esto incluye clientes, contratos de Arch, pools, wallets desconocidas
-    if not df_balances_all_raw.empty:
-        raw = df_balances_all_raw.copy()
-        raw["base_symbol"] = raw["symbol"].map(SYMBOL_TO_BASE).fillna(raw["symbol"])
-        raw["price_usd"]   = raw["base_symbol"].map(prices).fillna(0)
-        raw["value_usd"]   = raw["balance"] * raw["price_usd"]
-        all_holders_aum = (
-            raw.groupby("base_symbol")["value_usd"]
-            .sum()
+    # ── 2. Retirado por token (desde outflows, sin transferencias internas) ───
+    if df_outflows is not None and not df_outflows.empty:
+        of = df_outflows[~df_outflows.get("is_internal_transfer", pd.Series(False, index=df_outflows.index))].copy()
+        if "base_symbol" not in of.columns:
+            of["base_symbol"] = of["symbol"].map(SYMBOL_TO_BASE).fillna(of["symbol"])
+        retirado = (
+            of.groupby("base_symbol")
+            .agg(
+                retirado_tokens=("amount", "sum"),
+                retirado_usd=("value_usd", "sum"),
+                num_txs=("tx_hash", "nunique"),
+            )
             .reset_index()
-            .rename(columns={"base_symbol": "token", "value_usd": "all_holders_usd"})
+            .rename(columns={"base_symbol": "token"})
         )
     else:
-        all_holders_aum = pd.DataFrame(columns=["token", "all_holders_usd"])
+        retirado = pd.DataFrame(columns=["token", "retirado_tokens", "retirado_usd", "num_txs"])
 
-    # ── 3. Solo clientes registrados ──────────────────────────────────────────
-    if not df_balances_clients.empty and "base_symbol" in df_balances_clients.columns:
-        client_aum = (
-            df_balances_clients.groupby("base_symbol")["value_usd"]
-            .sum()
-            .reset_index()
-            .rename(columns={"base_symbol": "token", "value_usd": "client_usd"})
-        )
+    # ── 3. Supply más reciente por token y red ────────────────────────────────
+    if not df_supply.empty and "label" in df_supply.columns and "supply" in df_supply.columns:
+        sup = df_supply.copy()
+        sup["day"] = pd.to_datetime(sup["day"], errors="coerce", utc=True)
+        has_network = "network" in sup.columns
+
+        if has_network:
+            # Normalizar label usando SYMBOL_TO_BASE (ej. ABDY_V1 → ABDY)
+            sup["label"] = sup["label"].map(SYMBOL_TO_BASE).fillna(sup["label"])
+            # Supply por red — sumar variantes del mismo token y tomar el último valor
+            latest_by_net = (
+                sup.sort_values("day")
+                .groupby(["label", "network", "day"])["supply"]
+                .sum()
+                .reset_index()
+                .groupby(["label", "network"])
+                .last()
+                .reset_index()
+            )
+            # Pivot: columnas supply_ethereum y supply_polygon
+            latest_supply = latest_by_net.pivot(
+                index="label", columns="network", values="supply"
+            ).reset_index()
+            latest_supply.columns.name = None
+            latest_supply = latest_supply.rename(columns={"label": "token"})
+            if "ethereum" not in latest_supply.columns:
+                latest_supply["ethereum"] = 0
+            if "polygon" not in latest_supply.columns:
+                latest_supply["polygon"] = 0
+            latest_supply = latest_supply.rename(columns={
+                "ethereum": "supply_eth",
+                "polygon":  "supply_pol",
+            })
+            latest_supply["supply_total"] = latest_supply["supply_eth"].fillna(0) + latest_supply["supply_pol"].fillna(0)
+        else:
+            # Formato viejo sin columna network → todo es supply_total
+            latest_supply = (
+                sup.sort_values("day")
+                .groupby("label")["supply"]
+                .last()
+                .reset_index()
+                .rename(columns={"label": "token", "supply": "supply_total"})
+            )
+            latest_supply["supply_eth"] = 0
+            latest_supply["supply_pol"] = 0
     else:
-        client_aum = pd.DataFrame(columns=["token", "client_usd"])
+        latest_supply = pd.DataFrame(columns=["token", "supply_total", "supply_eth", "supply_pol"])
 
     # ── 4. Merge y cálculos ───────────────────────────────────────────────────
-    rec = latest_supply.merge(all_holders_aum, on="token", how="left")
-    rec = rec.merge(client_aum, on="token", how="left")
-    rec["all_holders_usd"] = rec["all_holders_usd"].fillna(0)
-    rec["client_usd"]      = rec["client_usd"].fillna(0)
-    rec["precio_usd"]      = rec["token"].map(prices).fillna(0)
-    rec["market_cap_usd"]  = rec["supply_total"] * rec["precio_usd"]
-
-    # Tokens en contratos/pools/Arch (todo lo que no es cliente registrado)
-    rec["arch_other_usd"]  = (rec["all_holders_usd"] - rec["client_usd"]).clip(lower=0)
-
-    # % del market cap que ya está en manos de clientes
-    rec["pct_client"] = rec.apply(
-        lambda r: r["client_usd"] / r["market_cap_usd"] * 100
-        if r["market_cap_usd"] > 0 else 0, axis=1
+    rec = remanente.merge(retirado, on="token", how="outer").fillna(0)
+    rec = rec.merge(latest_supply, on="token", how="left")
+    for col in ["supply_total", "supply_eth", "supply_pol"]:
+        if col not in rec.columns:
+            rec[col] = 0
+        rec[col] = rec[col].fillna(0)
+    rec["precio_usd"]     = rec["token"].map(prices).fillna(0)
+    rec["market_cap_eth"] = rec["supply_eth"] * rec["precio_usd"]
+    rec["market_cap_pol"] = rec["supply_pol"] * rec["precio_usd"]
+    rec["market_cap_usd"] = rec["supply_total"] * rec["precio_usd"]
+    rec["historico_usd"] = rec["remanente_usd"] + rec["retirado_usd"]
+    rec["pct_retirado"]  = rec.apply(
+        lambda r: r["retirado_usd"] / r["historico_usd"] * 100
+        if r["historico_usd"] > 0 else 0, axis=1
     ).round(2)
-
-    # Delta supply vs suma on-chain (debería ser ~0; si es grande → error de datos)
-    rec["delta_usd"] = rec["market_cap_usd"] - rec["all_holders_usd"]
-    rec["delta_pct"] = rec.apply(
-        lambda r: abs(r["delta_usd"]) / r["market_cap_usd"] * 100
+    rec["pct_remanente_vs_cap"] = rec.apply(
+        lambda r: r["remanente_usd"] / r["market_cap_usd"] * 100
         if r["market_cap_usd"] > 0 else 0, axis=1
-    ).round(2)
+    ).round(1)
 
-    # Alerta
-    def _alerta(r):
-        if r["market_cap_usd"] == 0:
-            return "— sin precio"
-        if r["client_usd"] > r["market_cap_usd"] * 1.05:
-            return "⚠️ Clientes > Market Cap"
-        if r["delta_pct"] > 10:
-            return "⚠️ Supply ≠ On-chain"
-        return "✓ OK"
+    rec["alerta"] = rec.apply(
+        lambda r: "⚠️ Sin precio" if r["precio_usd"] == 0
+        else ("⚠️ Remanente > Market Cap" if r["market_cap_usd"] > 0 and r["remanente_usd"] > r["market_cap_usd"] * 1.05
+        else ("⚠️ Retirado > Histórico" if r["retirado_usd"] > r["historico_usd"] * 1.01
+        else "✓ OK")),
+        axis=1
+    )
 
-    rec["alerta"] = rec.apply(_alerta, axis=1)
-
-    return rec.sort_values("market_cap_usd", ascending=False).reset_index(drop=True)
+    rec = rec[(rec["precio_usd"] > 0) & (rec["historico_usd"] > 0)]
+    return rec.sort_values("historico_usd", ascending=False).reset_index(drop=True)
 
 
 # =============================================================================
@@ -1081,9 +1133,63 @@ def run_pipeline(
     if "pools" in raw_data and not raw_data["pools"].empty:
         raw_data["pools"].to_csv(PROCESSED_DIR / "pools.csv", index=False)
 
-    # 8. Save supply data
-    if "supply" in raw_data and not raw_data["supply"].empty:
-        raw_data["supply"].to_csv(PROCESSED_DIR / "supply.csv", index=False)
+    # 8. Combinar supply ETH + supply POL con columna network
+    df_supply_eth = raw_data.get("supply_eth", pd.DataFrame())
+    df_supply_pol = raw_data.get("supply_pol", pd.DataFrame())
+
+    supply_frames = []
+    if not df_supply_eth.empty:
+        df_eth = df_supply_eth.copy()
+        if "network" not in df_eth.columns:
+            df_eth["network"] = "ethereum"
+        supply_frames.append(df_eth)
+
+    if not df_supply_pol.empty:
+        df_pol = df_supply_pol.copy()
+        if "network" not in df_pol.columns:
+            df_pol["network"] = "polygon"
+        supply_frames.append(df_pol)
+
+    if supply_frames:
+        df_supply_combined = pd.concat(supply_frames, ignore_index=True)
+        df_supply_combined.to_csv(PROCESSED_DIR / "supply.csv", index=False)
+        raw_data["supply"] = df_supply_combined
+        log.info(f"Supply combinado: {len(df_supply_combined)} rows "
+                 f"(ETH: {len(df_supply_eth)}, POL: {len(df_supply_pol)})")
+    elif "supply" not in raw_data or raw_data["supply"].empty:
+        raw_data["supply"] = pd.DataFrame()
+
+    # 9b. Balances de contratos Arch (cuánto Arch token hold cada contrato)
+    #     Filtra los raw balances por las direcciones de contratos conocidos
+    all_contract_addrs = set(a.lower() for a in ARCH_CONTRACTS_POLYGON.keys())
+    all_contract_addrs |= set(a.lower() for a in ARCH_CONTRACTS_ETHEREUM.keys())
+
+    frames_contract = []
+    for df_raw, network in [
+        (raw_data.get("balances_polygon",  pd.DataFrame()), "polygon"),
+        (raw_data.get("balances_ethereum", pd.DataFrame()), "ethereum"),
+    ]:
+        if df_raw.empty:
+            continue
+        df_c = df_raw[df_raw["wallet"].str.lower().isin(all_contract_addrs)].copy()
+        if df_c.empty:
+            continue
+        df_c["network"] = network
+        df_c["base_symbol"] = df_c["symbol"].map(SYMBOL_TO_BASE).fillna(df_c["symbol"])
+        df_c["price_usd"]   = df_c["base_symbol"].map(prices).fillna(0)
+        df_c["value_usd"]   = df_c["balance"] * df_c["price_usd"]
+        frames_contract.append(df_c)
+
+    if frames_contract:
+        df_contracts = pd.concat(frames_contract, ignore_index=True)
+        # Agregar nombre del contrato
+        contract_names = {**ARCH_CONTRACTS_POLYGON, **ARCH_CONTRACTS_ETHEREUM}
+        df_contracts["contract_name"] = df_contracts["wallet"].str.lower().map(
+            {k.lower(): v for k, v in contract_names.items()}
+        )
+        df_contracts.to_csv(PROCESSED_DIR / "contract_balances.csv", index=False)
+        total_val = df_contracts["value_usd"].sum()
+        log.info(f"Contract balances: {len(df_contracts)} rows, ${total_val:,.0f} total en contratos Arch")
 
     # 9. Detect unknown wallets (on-chain but not in client CSV)
     #    Exclude the Arch internal AAGG contract (0xafb...) — already filtered via ARCHEMIST_TOKENS_POLYGON
@@ -1105,32 +1211,32 @@ def run_pipeline(
                  f"${df_unknown['balance_usd'].sum():,.0f} remanente, "
                  f"${df_unknown['outflow_usd'].sum():,.0f} retirado")
 
-    # 10. Merge unknown wallets into wallet_summary as segment="retail"
-    #     so their totals appear in all dashboard metrics
+    # 10. Unknown wallets → se agregan a wallet_summary como segment="sin_registro"
+    #     para que el AUM total del overview incluya los tres segmentos:
+    #     Preferente + Retail + Sin registro = Total
     if not df_unknown.empty and not wallet_summary.empty:
         unk_rows = pd.DataFrame({
-            "wallet_address":    df_unknown["wallet_address"],
-            "total_balance_usd": df_unknown["balance_usd"].fillna(0),
-            "total_outflow_usd": df_unknown["outflow_usd"].fillna(0),
-            "num_tokens":        pd.NA,
-            "tokens_held":       df_unknown.get("tokens", pd.Series(dtype=str)),
-            "network":           "polygon",
-            "segment":           "retail",
-            "customer_name":     "",
-            "email":             "",
+            "wallet_address":     df_unknown["wallet_address"],
+            "total_balance_usd":  df_unknown["balance_usd"].fillna(0),
+            "total_outflow_usd":  df_unknown["outflow_usd"].fillna(0),
+            "num_tokens":         pd.NA,
+            "tokens_held":        df_unknown.get("tokens", pd.Series(dtype=str)),
+            "network":            "polygon",
+            "segment":            "sin_registro",   # ← tercer segmento, no retail
+            "customer_name":      "",
+            "email":              "",
             "num_outflow_events": df_unknown.get("num_txs", pd.Series(dtype=int)).fillna(0).astype(int),
-            "last_outflow_date": df_unknown.get("last_activity", pd.Series(dtype=str)),
-            "outflow_tokens":    "",
+            "last_outflow_date":  df_unknown.get("last_activity", pd.Series(dtype=str)),
+            "outflow_tokens":     "",
         })
-        # Classify status
-        def _status(row):
+        def _status_unk(row):
             has_bal = row["total_balance_usd"] > DUST_THRESHOLD_USD
             has_out = row["total_outflow_usd"] > DUST_THRESHOLD_USD
             if has_bal and not has_out:   return "Sin movimiento"
             if has_bal and has_out:       return "Retiro parcial"
             if not has_bal and has_out:   return "Retirado completamente"
             return "Sin saldo (sin retiro detectado)"
-        unk_rows["status"] = unk_rows.apply(_status, axis=1)
+        unk_rows["status"] = unk_rows.apply(_status_unk, axis=1)
         total_per = unk_rows["total_balance_usd"] + unk_rows["total_outflow_usd"]
         unk_rows["pct_withdrawn"] = (unk_rows["total_outflow_usd"] / total_per.replace(0, 1) * 100).round(2)
 
@@ -1138,39 +1244,27 @@ def run_pipeline(
         wallet_summary = wallet_summary.sort_values("total_balance_usd", ascending=False)
         wallet_summary.to_csv(PROCESSED_DIR / "wallet_summary.csv", index=False)
 
-        # Recompute global metrics with unknowns included
         global_metrics = compute_global_metrics(wallet_summary)
         with open(PROCESSED_DIR / "global_metrics.json", "w") as f:
             json.dump(global_metrics, f, indent=2, default=str)
-        log.info(f"Wallet summary updated with {len(unk_rows)} unknown wallets merged into retail")
+        log.info(f"Wallet summary: {len(unk_rows)} wallets sin registro agregadas como tercer segmento")
 
-    # 11. Reconciliación: supply × precio vs suma total de todos los holders
-    # Usamos los balances crudos de Dune (todos los wallets, sin filtrar a clientes)
-    # para el cruce contable completo: market_cap ≈ all_holders ≥ client_usd
-    df_bal_poly_raw = raw_data.get("balances_polygon", pd.DataFrame())
-    df_bal_eth_raw  = raw_data.get("balances_ethereum", pd.DataFrame())
-    raw_frames = []
-    if not df_bal_poly_raw.empty:
-        raw_frames.append(df_bal_poly_raw.copy())
-    if not df_bal_eth_raw.empty:
-        raw_frames.append(df_bal_eth_raw.copy())
-    df_balances_all_raw = pd.concat(raw_frames, ignore_index=True) if raw_frames else pd.DataFrame()
-
+    # 11. Reconciliación por token: mismo origen de datos que el overview.
+    #     remanente_usd + retirado_usd = histórico_usd (mismos datos que balances.csv / outflows.csv)
     df_recon = compute_reconciliation(
         raw_data.get("supply", pd.DataFrame()),
-        df_balances_all_raw,
+        pd.DataFrame(),   # df_balances_all_raw no se usa
         df_balances,
         prices,
+        df_outflows=df_outflows,
     )
     if not df_recon.empty:
         df_recon.to_csv(PROCESSED_DIR / "reconciliation.csv", index=False)
         alertas = df_recon[df_recon["alerta"].str.startswith("⚠️")]
         if not alertas.empty:
-            log.warning(f"⚠️ Reconciliación: {len(alertas)} tokens con inconsistencia:")
-            for _, row in alertas.iterrows():
-                log.warning(f"   {row['token']}: clientes ${row.get('client_usd', 0):,.0f} | market cap ${row['market_cap_usd']:,.0f} | delta {row.get('delta_pct', 0):.1f}%")
+            log.warning(f"⚠️ Reconciliación: {len(alertas)} tokens con datos inconsistentes")
         else:
-            log.info(f"✓ Reconciliación OK: todos los tokens dentro del supply")
+            log.info(f"✓ Reconciliación OK: todos los tokens cuadran")
 
     log.info("=" * 60)
     log.info("  PIPELINE COMPLETE")

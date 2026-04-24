@@ -1,1 +1,18 @@
-{}
+{
+  "total_remaining_usd": 1419951.891815277,
+  "total_withdrawn_usd": 1431155.5655231623,
+  "total_initial_usd": 2851107.4573384393,
+  "pct_remaining": 49.803520669151766,
+  "pct_withdrawn": 50.196479330848234,
+  "preferente_remaining_usd": 1101120.9220475797,
+  "preferente_withdrawn_usd": 704136.9435760016,
+  "retail_remaining_usd": 258437.17375886295,
+  "retail_withdrawn_usd": 556636.6948834665,
+  "wallets_with_balance": "1153",
+  "wallets_without_balance": "1200",
+  "wallets_fully_withdrawn": "697",
+  "wallets_partial_withdrawal": "88",
+  "wallets_no_movement": "1065",
+  "total_wallets": 2353,
+  "timestamp": "2026-04-24T17:59:24.033900"
+}

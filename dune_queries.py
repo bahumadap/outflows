@@ -225,6 +225,60 @@ ORDER BY t.evt_block_time DESC
 
 
 # =========================================================================
+# Q6: SUPPLY CORRECTO
+# Base tokens (WEB3, CHAIN, ACAI, ADDY, AEDY, ABDY) → supply en ETHEREUM
+# Portfolio tokens (AAGG, AMOD, ABAL)               → supply en POLYGON
+# =========================================================================
+def query_supply_eth() -> str:
+    """Supply diario en Ethereum — solo tokens base (query 7370113)."""
+    return """
+WITH
+eth_tokens AS (
+    SELECT * FROM (VALUES
+        (0x8f0d5660929ca6ac394c5c41f59497629b1dbc23, 'WEB3',  18),
+        (0x89c53b02558e4d1c24cb5aac8d735db3a654b30b, 'CHAIN', 18),
+        (0xd1ce69b4bdd3dda553ea55a2a57c21c65190f3d5, 'ACAI',  18),
+        (0xe15a66b7b8e385caa6f69fd0d55984b96d7263cf, 'ADDY',  18),
+        (0x103bb3ebc6f61b3db2d6e01e54ef7d9899a2e16b, 'AEDY',  18),
+        (0xde2925d582fc8711a0e93271c12615bdd043ed1c, 'ABDY',  18)
+    ) AS t(contract_address, label, decimals)
+),
+eth_daily AS (
+    SELECT
+        date_trunc('day', t.evt_block_time) AS day,
+        a.label,
+        a.contract_address,
+        SUM(
+            CASE
+                WHEN t."to"   = 0x0000000000000000000000000000000000000000 THEN -CAST(t.value AS DOUBLE)
+                WHEN t."from" = 0x0000000000000000000000000000000000000000 THEN  CAST(t.value AS DOUBLE)
+                ELSE 0
+            END
+        ) / POWER(10, a.decimals) AS daily_change
+    FROM erc20_ethereum.evt_Transfer t
+    INNER JOIN eth_tokens a ON t.contract_address = a.contract_address
+    WHERE t."from" = 0x0000000000000000000000000000000000000000
+       OR t."to"   = 0x0000000000000000000000000000000000000000
+    GROUP BY 1, 2, 3, a.decimals
+)
+SELECT
+    day,
+    label,
+    CAST(contract_address AS VARCHAR) AS contract_address,
+    'ethereum' AS network,
+    SUM(daily_change) OVER (PARTITION BY label ORDER BY day) AS supply
+FROM eth_daily
+WHERE day >= CURRENT_DATE - INTERVAL '5' DAY
+ORDER BY label, day
+"""
+
+
+# Alias para compatibilidad
+def query_supply_correct() -> str:
+    return query_supply_eth()
+
+
+# =========================================================================
 # UTILITY: Print all queries for manual use in Dune UI
 # =========================================================================
 def print_all_queries():
@@ -235,6 +289,7 @@ def print_all_queries():
         ("Q3: Outflows Polygon", query_outflows_polygon()),
         ("Q4: Outflows Ethereum", query_outflows_ethereum()),
         ("Q5: USDC Inflows Polygon", query_usdc_inflows_polygon()),
+        ("Q6: Supply Correcto (ETH base + POL portfolios)", query_supply_correct()),
     ]
     for name, sql in queries:
         print(f"\n{'='*70}")

@@ -24,7 +24,8 @@ DUST_THRESHOLD_TOKENS = 0.001  # Minimum tokens to consider non-zero
 DUNE_API_BASE = "https://api.dune.com/api/v1"
 
 # Existing Dune query IDs (from arch-dune-queries skill)
-DUNE_QUERY_SUPPLY = 6963145
+DUNE_QUERY_SUPPLY_ETH = 7370113  # Supply en Ethereum (WEB3, CHAIN, ACAI, ADDY, AEDY, ABDY)
+DUNE_QUERY_SUPPLY_POL = 6963145  # Supply en Polygon (todos los tokens: base + portfolios)
 DUNE_QUERY_POOLS  = 3591853  # Pool liquidity — se usa como fallback de precios
 # DUNE_QUERY_PRICES (6963204) eliminado — reemplazado por Google Sheet
 
