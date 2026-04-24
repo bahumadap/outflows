@@ -417,7 +417,7 @@ def extract_via_csv(csv_dir: str) -> dict:
     csv_path = Path(csv_dir)
 
     expected_files = [
-        "prices", "supply", "pools",
+        "prices", "supply", "supply_eth", "supply_pol", "pools",
         "balances_polygon", "balances_ethereum",
         "outflows_polygon", "outflows_ethereum",
     ]
@@ -881,7 +881,7 @@ def compute_reconciliation(
     # ── 3. Supply más reciente por token y red ────────────────────────────────
     if not df_supply.empty and "label" in df_supply.columns and "supply" in df_supply.columns:
         sup = df_supply.copy()
-        sup["day"] = pd.to_datetime(sup["day"], errors="coerce", utc=True)
+        sup["day"] = pd.to_datetime(sup["day"], errors="coerce", utc=False)
         has_network = "network" in sup.columns
 
         if has_network:
@@ -1138,17 +1138,19 @@ def run_pipeline(
     df_supply_pol = raw_data.get("supply_pol", pd.DataFrame())
 
     supply_frames = []
-    if not df_supply_eth.empty:
-        df_eth = df_supply_eth.copy()
-        if "network" not in df_eth.columns:
-            df_eth["network"] = "ethereum"
-        supply_frames.append(df_eth)
 
+    def _normalize_supply(df, network):
+        df = df.copy()
+        if "network" not in df.columns:
+            df["network"] = network
+        # Normalizar day a string YYYY-MM-DD para evitar conflictos de timezone
+        df["day"] = pd.to_datetime(df["day"], errors="coerce").dt.strftime("%Y-%m-%d")
+        return df
+
+    if not df_supply_eth.empty:
+        supply_frames.append(_normalize_supply(df_supply_eth, "ethereum"))
     if not df_supply_pol.empty:
-        df_pol = df_supply_pol.copy()
-        if "network" not in df_pol.columns:
-            df_pol["network"] = "polygon"
-        supply_frames.append(df_pol)
+        supply_frames.append(_normalize_supply(df_supply_pol, "polygon"))
 
     if supply_frames:
         df_supply_combined = pd.concat(supply_frames, ignore_index=True)

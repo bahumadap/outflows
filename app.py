@@ -936,8 +936,8 @@ def render_tables(ws: pd.DataFrame, balances: pd.DataFrame, outflows: pd.DataFra
         supply = data.get("supply", pd.DataFrame())
         if not supply.empty and "day" in supply.columns:
             st.markdown("**Supply desde 1 Abr 2026**")
-            supply["day"] = pd.to_datetime(supply["day"], errors="coerce", utc=True)
-            st.dataframe(supply[supply["day"] >= pd.Timestamp("2026-04-01", tz="UTC")], use_container_width=True)
+            supply["day"] = pd.to_datetime(supply["day"], errors="coerce")
+            st.dataframe(supply[supply["day"] >= pd.Timestamp("2026-04-01")], use_container_width=True)
 
     with tab7:
         data = load_data()
@@ -1155,24 +1155,50 @@ def render_tables(ws: pd.DataFrame, balances: pd.DataFrame, outflows: pd.DataFra
         st.markdown('<div class="section-title">Tokens Arch en contratos (on-chain)</div>', unsafe_allow_html=True)
         cb = data.get("contract_balances", pd.DataFrame())
         if not cb.empty and "value_usd" in cb.columns:
-            # Pivot: filas = contrato, columnas = base_symbol, valores = value_usd
-            piv = cb[cb["value_usd"] > 0.01].pivot_table(
+            cb_f = cb[cb["value_usd"] > 0.01].copy()
+
+            # Pivot USD
+            piv_usd = cb_f.pivot_table(
                 index=["wallet", "contract_name", "network"],
                 columns="base_symbol", values="value_usd", aggfunc="sum", fill_value=0
             ).reset_index()
-            piv.columns.name = None
-            piv["total_usd"] = piv.select_dtypes("number").sum(axis=1)
+            piv_usd.columns.name = None
+
+            # Pivot cantidad (balance tokens)
+            piv_qty = cb_f.pivot_table(
+                index=["wallet", "contract_name", "network"],
+                columns="base_symbol", values="balance", aggfunc="sum", fill_value=0
+            ).reset_index()
+            piv_qty.columns.name = None
+
+            # Renombrar columnas
+            tokens_found = [c for c in piv_usd.columns if c not in ["wallet","contract_name","network"]]
+            piv_usd = piv_usd.rename(columns={t: f"{t}_usd" for t in tokens_found})
+            piv_qty = piv_qty.rename(columns={t: f"{t}_qty" for t in tokens_found})
+
+            # Merge y ordenar columnas intercaladas: TOKEN_qty | TOKEN_usd
+            piv = piv_usd.merge(piv_qty[["wallet","contract_name","network"] + [f"{t}_qty" for t in tokens_found]],
+                                on=["wallet","contract_name","network"], how="left")
+            piv["total_usd"] = piv[[f"{t}_usd" for t in tokens_found]].sum(axis=1)
             piv = piv.sort_values("total_usd", ascending=False)
 
-            token_sym_cols = [c for c in piv.columns if c not in ["wallet","contract_name","network","total_usd"]]
+            # Orden de columnas: info + intercalado qty/usd por token + total
+            interleaved = []
+            for t in tokens_found:
+                interleaved += [f"{t}_qty", f"{t}_usd"]
+            display_cols = ["wallet", "contract_name", "network"] + interleaved + ["total_usd"]
+            piv = piv[[c for c in display_cols if c in piv.columns]]
+
+            # Formato
             fmt_cb = {"total_usd": "${:,.2f}"}
-            for c in token_sym_cols:
-                fmt_cb[c] = "${:,.2f}"
+            for t in tokens_found:
+                fmt_cb[f"{t}_usd"] = "${:,.2f}"
+                fmt_cb[f"{t}_qty"] = "{:,.4f}"
 
             # Fila total
             total_cb = {c: "" for c in piv.columns}
             total_cb["contract_name"] = "TOTAL"
-            for c in token_sym_cols + ["total_usd"]:
+            for c in [f"{t}_usd" for t in tokens_found] + [f"{t}_qty" for t in tokens_found] + ["total_usd"]:
                 if c in piv.columns:
                     total_cb[c] = piv[c].sum()
             piv_display = pd.concat([piv, pd.DataFrame([total_cb])], ignore_index=True)
@@ -1181,7 +1207,7 @@ def render_tables(ws: pd.DataFrame, balances: pd.DataFrame, outflows: pd.DataFra
                 piv_display.style.format(fmt_cb, na_rep=""),
                 use_container_width=True, height=420,
             )
-            st.caption(f"Fuente: Dune balances_polygon + balances_ethereum. Solo tokens con valor > $0.01.")
+            st.caption("Fuente: Dune balances_polygon + balances_ethereum. Solo tokens con valor > $0.01. Columnas: _qty = cantidad de tokens, _usd = valor en USD.")
         else:
             st.info("Sin datos. Ejecutá el pipeline primero.")
 
