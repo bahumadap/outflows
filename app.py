@@ -263,6 +263,54 @@ def render_overview(ws: pd.DataFrame):
             </div>
         </div>""", unsafe_allow_html=True)
 
+    # ── Price strip ───────────────────────────────────────────────────────────
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    data = load_data()
+
+    # Recopilar precios: pools para base tokens, balances para vault NAV
+    prices_display = {}
+    pools = data.get("pools", pd.DataFrame())
+    if not pools.empty and "token" in pools.columns and "price" in pools.columns:
+        for _, r in pools[pools["token"] != "USDC"].iterrows():
+            try:
+                prices_display[r["token"]] = float(r["price"])
+            except (ValueError, TypeError):
+                pass
+
+    balances = data.get("balances", pd.DataFrame())
+    if not balances.empty and "base_symbol" in balances.columns and "price_usd" in balances.columns:
+        for sym in ["AAGG", "AMOD", "ABAL", "AP60"]:
+            rows = balances[balances["base_symbol"] == sym]
+            if not rows.empty:
+                p = rows["price_usd"].iloc[0]
+                if p > 0:
+                    prices_display[sym] = float(p)
+
+    TOKEN_COLORS = {
+        "WEB3": "#10B981", "CHAIN": "#3B82F6", "ABDY": "#8B5CF6",
+        "AEDY": "#6366F1", "ADDY": "#F59E0B", "ACAI": "#EC4899",
+        "AAGG": "#64748B", "AMOD": "#64748B", "ABAL": "#64748B",
+    }
+    ORDER = ["WEB3", "CHAIN", "ABDY", "AEDY", "ADDY", "ACAI", "AAGG", "AMOD", "ABAL"]
+    tokens_to_show = [t for t in ORDER if t in prices_display]
+
+    if tokens_to_show:
+        cols = st.columns(len(tokens_to_show))
+        for i, sym in enumerate(tokens_to_show):
+            price = prices_display[sym]
+            color = TOKEN_COLORS.get(sym, "#6B7A99")
+            is_vault = sym in ("AAGG", "AMOD", "ABAL")
+            label_extra = "<div style='font-size:9px;color:#2D3650;margin-top:1px'>NAV</div>" if is_vault else ""
+            with cols[i]:
+                st.markdown(
+                    f"<div style='border:1px solid #1C2333;border-radius:6px;padding:10px 12px;text-align:center'>"
+                    f"<div style='font-size:11px;font-weight:700;color:{color};letter-spacing:0.05em'>{sym}</div>"
+                    f"{label_extra}"
+                    f"<div style='font-size:15px;font-weight:700;color:#CDD5E0;margin-top:4px;letter-spacing:-0.01em'>${price:,.4f}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
 
 # ─── SEGMENTS ─────────────────────────────────────────────────────────────────
 

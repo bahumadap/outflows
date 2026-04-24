@@ -25,14 +25,23 @@ DUNE_API_BASE = "https://api.dune.com/api/v1"
 
 # Existing Dune query IDs (from arch-dune-queries skill)
 DUNE_QUERY_SUPPLY = 6963145
-DUNE_QUERY_PRICES = 6963204
-DUNE_QUERY_POOLS  = 3591853  # Pool liquidity
+DUNE_QUERY_POOLS  = 3591853  # Pool liquidity — se usa como fallback de precios
+# DUNE_QUERY_PRICES (6963204) eliminado — reemplazado por Google Sheet
 
 # Custom queries saved in Dune UI (April 2026)
 DUNE_QUERY_BALANCES_POLYGON  = 6993335
 DUNE_QUERY_OUTFLOWS_POLYGON  = 6993341
 DUNE_QUERY_BALANCES_ETHEREUM = 6993356
 DUNE_QUERY_OUTFLOWS_ETHEREUM = 6993368
+
+# Google Sheets — precios diarios por token (fuente primaria de precios, gratis)
+GSHEET_PRICES_CSV = (
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vTRo8ZMelWUvWRGixaxnpeKsgRU7WPck5Tiv3Dn7s16NYQSVAkDJLr54IHjuM7Jqq1Z7a9ho3k59dN6"
+    "/pub?gid=1638022190&single=true&output=csv"
+)
+# Columnas del sheet → símbolos base Arch (incluye vault tokens directamente)
+GSHEET_PRICE_COLUMNS = ["WEB3", "CHAIN", "ACAI", "ADDY", "AEDY", "ABDY", "ABAL", "AMOD", "AAGG"]
 
 # =============================================================================
 # PORTFOLIO VAULT POSITIONS (hardcoded desde getPositions() en Polygon)

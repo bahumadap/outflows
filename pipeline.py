@@ -32,10 +32,10 @@ from config import (
     ARCH_CONTRACTS_POLYGON, ARCH_CONTRACTS_ETHEREUM,
     SYMBOL_TO_BASE, BURN_ADDRESS,
     CUTOFF_DATE, DUST_THRESHOLD_USD, DUST_THRESHOLD_TOKENS,
-    DUNE_API_BASE, DUNE_QUERY_PRICES, DUNE_QUERY_SUPPLY, DUNE_QUERY_POOLS,
+    DUNE_API_BASE, DUNE_QUERY_SUPPLY, DUNE_QUERY_POOLS,
     DUNE_QUERY_BALANCES_POLYGON, DUNE_QUERY_OUTFLOWS_POLYGON,
     DUNE_QUERY_BALANCES_ETHEREUM, DUNE_QUERY_OUTFLOWS_ETHEREUM,
-    VAULT_POSITIONS,
+    VAULT_POSITIONS, GSHEET_PRICES_CSV, GSHEET_PRICE_COLUMNS,
     classify_outflow_destination,
 )
 from dune_queries import (
@@ -312,18 +312,17 @@ def _cache_is_fresh(name: str, max_hours: float) -> bool:
 
 
 # Queries que se ejecutan diario (precios y balances cambian frecuentemente)
+# NOTA: outflows_polygon y outflows_ethereum se manejan en el bloque incremental — NO incluir aquí
 QUERIES_DAILY = [
     ("pools",              DUNE_QUERY_POOLS),
     ("balances_polygon",   DUNE_QUERY_BALANCES_POLYGON),
-    ("outflows_polygon",   DUNE_QUERY_OUTFLOWS_POLYGON),
 ]
 
 # Queries que se ejecutan semanal (cambian poco)
+# Nota: precios ya no vienen de Dune — se obtienen del Google Sheet (gratis)
 QUERIES_WEEKLY = [
-    ("prices",             DUNE_QUERY_PRICES),
     ("supply",             DUNE_QUERY_SUPPLY),
     ("balances_ethereum",  DUNE_QUERY_BALANCES_ETHEREUM),
-    ("outflows_ethereum",  DUNE_QUERY_OUTFLOWS_ETHEREUM),
 ]
 
 
@@ -434,71 +433,86 @@ def extract_via_csv(csv_dir: str) -> dict:
 # =============================================================================
 # 4. DATA PROCESSING
 # =============================================================================
-def process_prices(df_prices: pd.DataFrame, df_pools: pd.DataFrame = None) -> dict:
+def fetch_gsheet_prices() -> dict:
+    """
+    Descarga el CSV de precios desde Google Sheets y retorna el último precio
+    disponible por token (última fila con fecha).
+    Gratis, sin créditos de Dune. Fuente primaria de precios.
+    """
+    try:
+        resp = requests.get(GSHEET_PRICES_CSV, timeout=15)
+        resp.raise_for_status()
+        from io import StringIO
+        df = pd.read_csv(StringIO(resp.text))
+        # Tomar la última fila no vacía
+        df = df.dropna(subset=["Date"])
+        if df.empty:
+            log.warning("Google Sheet de precios vacío")
+            return {}
+        last = df.iloc[-1]
+        prices = {}
+        for col in GSHEET_PRICE_COLUMNS:
+            if col in df.columns:
+                try:
+                    val = float(last[col])
+                    if val > 0:
+                        prices[col] = val
+                except (ValueError, TypeError):
+                    pass
+        date_str = str(last.get("Date", "?"))
+        log.info(f"Precios desde Google Sheet ({date_str}): { {k: round(v,4) for k,v in prices.items()} }")
+        return prices
+    except Exception as e:
+        log.error(f"No se pudo obtener precios de Google Sheet: {e}")
+        return {}
+
+
+def process_prices(df_prices: pd.DataFrame = None, df_pools: pd.DataFrame = None) -> dict:
     """
     Process prices into a symbol -> USD price dict.
 
     Sources (in order of priority):
-    1. Pools data (query 3591853): columns 'token' and 'price' — most reliable,
-       covers all 6 base Archemist tokens (WEB3, CHAIN, ACAI, ABDY, ADDY, AEDY).
-    2. Price query (6963204): columns 'address' and 'precio' — maps Archemist addresses.
-    3. SYMBOL_TO_BASE propagation: extends prices to _PROD, _V1, _SET variants.
+    1. Google Sheet (fuente primaria, gratis) — incluye vault tokens AAGG/AMOD/ABAL directamente.
+    2. Pools data (query 3591853) — fallback para tokens base si el sheet falla.
+    3. VAULT_POSITIONS NAV — fallback si vault tokens no están en ninguna fuente.
+    4. SYMBOL_TO_BASE propagation — extiende precios a variantes _PROD, _V1, _SET.
     """
     prices = {}
 
-    # --- Source 1: pools data (most reliable) ---
+    # --- Source 1: Google Sheet (primaria, sin créditos Dune) ---
+    gsheet_prices = fetch_gsheet_prices()
+    prices.update(gsheet_prices)
+
+    # --- Source 2: pools data (fallback para tokens base) ---
     if df_pools is not None and not df_pools.empty:
         for _, row in df_pools.iterrows():
             token = str(row.get("token", "")).strip().upper()
             if not token or token == "USDC":
                 continue
+            if token in prices:
+                continue  # ya tenemos del sheet — no pisar
             try:
                 price = float(row.get("price", 0) or 0)
             except (ValueError, TypeError):
                 price = 0
             if price > 0:
                 prices[token] = price
-        log.info(f"Prices from pools: {prices}")
-
-    # --- Source 2: price query (supplement — only fill gaps not covered by pools) ---
-    # Dune query 6963204 returns historical pricePerShare data; columns vary:
-    #   'contract_address' or 'address', and 'pricePerShare_in_usdc' or 'precio' or 'price'
-    if df_prices is not None and not df_prices.empty:
-        addr_to_sym = {addr.lower(): info["symbol"] for addr, info in ARCHEMIST_TOKENS_POLYGON.items()}
-        # normalize column names
-        col_addr  = next((c for c in ["address", "contract_address"] if c in df_prices.columns), None)
-        col_price = next((c for c in ["precio", "pricePerShare_in_usdc", "price", "price_usd"] if c in df_prices.columns), None)
-        if col_addr and col_price:
-            # Take the most recent entry per address (last row wins or use max)
-            for addr_raw, grp in df_prices.groupby(col_addr):
-                addr = str(addr_raw).lower()
-                if addr not in addr_to_sym:
-                    continue
-                sym = addr_to_sym[addr]
-                if sym in prices:
-                    continue  # already have from pools — don't override
-                try:
-                    price = float(grp[col_price].iloc[-1] or 0)
-                except (ValueError, TypeError):
-                    price = 0
-                if price > 0:
-                    prices[sym] = price
-        log.info(f"Prices after price query supplement: {prices}")
+                log.info(f"  Precio desde pools (fallback): {token} = ${price:.4f}")
 
     if not prices:
-        log.warning("No price data found in pools or price query. All USD values will be $0.")
+        log.warning("No price data found. All USD values will be $0.")
         return {}
 
-    # --- Source 3: NAV de tokens de portfolio (AAGG, AMOD, ABAL, AP60) ---
-    # NAV = sum(unidades_i * precio_i) usando posiciones hardcodeadas de getPositions()
+    # --- Source 3: NAV de vault tokens (fallback si no están en sheet ni pools) ---
     for vault_sym, components in VAULT_POSITIONS.items():
+        if vault_sym in prices:
+            continue  # ya tenemos del sheet
         nav = sum(units * prices.get(comp, 0) for comp, units in components.items())
         if nav > 0:
             prices[vault_sym] = nav
-            log.info(f"Vault NAV: {vault_sym} = ${nav:.4f}")
+            log.info(f"  Vault NAV (fallback): {vault_sym} = ${nav:.4f}")
 
-    # --- Source 4: propagate to variants via SYMBOL_TO_BASE ---
-    # e.g. WEB3_PROD → WEB3 price, ABDY_V1 → ABDY price, CHAIN_SET → CHAIN price
+    # --- Source 4: propagar a variantes (_PROD, _V1, _SET) ---
     extended = {}
     for sym, base in SYMBOL_TO_BASE.items():
         if sym not in prices and base in prices:
@@ -1025,10 +1039,9 @@ def run_pipeline(
             if key not in raw_data:
                 raw_data[key] = val
 
-    # 3. Process prices (use pools as primary source + price query as supplement)
+    # 3. Process prices (Google Sheet como fuente primaria, pools como fallback)
     prices = process_prices(
-        raw_data.get("prices", pd.DataFrame()),
-        raw_data.get("pools", pd.DataFrame()),
+        df_pools=raw_data.get("pools", pd.DataFrame()),
     )
 
     # 4. Process balances
@@ -1153,9 +1166,9 @@ def run_pipeline(
         df_recon.to_csv(PROCESSED_DIR / "reconciliation.csv", index=False)
         alertas = df_recon[df_recon["alerta"].str.startswith("⚠️")]
         if not alertas.empty:
-            log.warning(f"⚠️ Reconciliación: {len(alertas)} tokens con AUM > Market Cap:")
+            log.warning(f"⚠️ Reconciliación: {len(alertas)} tokens con inconsistencia:")
             for _, row in alertas.iterrows():
-                log.warning(f"   {row['token']}: AUM ${row['aum_clientes_usd']:,.0f} > Cap ${row['market_cap_usd']:,.0f}")
+                log.warning(f"   {row['token']}: clientes ${row.get('client_usd', 0):,.0f} | market cap ${row['market_cap_usd']:,.0f} | delta {row.get('delta_pct', 0):.1f}%")
         else:
             log.info(f"✓ Reconciliación OK: todos los tokens dentro del supply")
 
