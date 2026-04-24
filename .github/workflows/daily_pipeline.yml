@@ -1,9 +1,7 @@
-name: Daily Pipeline Update
+name: Pipeline Update
 
 on:
-  schedule:
-    - cron: '0 13 * * *'   # 9:00 AM Santiago (CLT = UTC-4, horario invierno)
-  workflow_dispatch:         # también permite correrlo manualmente desde GitHub
+  workflow_dispatch:   # Solo manual — correr desde GitHub Actions → Run workflow
 
 jobs:
   run-pipeline:

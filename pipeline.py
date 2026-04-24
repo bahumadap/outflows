@@ -264,9 +264,31 @@ class DuneClient:
             time.sleep(poll)
         raise TimeoutError(f"Query did not complete within {timeout}s")
 
+    def get_latest_results(self, query_id: int, limit: int = 50000) -> pd.DataFrame:
+        """
+        Obtiene los últimos resultados cacheados de una query SIN ejecutarla.
+        No consume créditos de ejecución — solo lee lo que ya corrió.
+        Requiere que la query tenga al menos un run previo (manual o programado en Dune).
+        """
+        url = f"{DUNE_API_BASE}/query/{query_id}/results"
+        params = {"limit": limit}
+        r = requests.get(url, headers=self.headers, params=params)
+        if r.status_code == 200:
+            data = r.json()
+            rows = data.get("result", {}).get("rows", [])
+            df = pd.DataFrame(rows)
+            # Log cuándo fue ejecutada por última vez
+            meta = data.get("execution_started_at") or data.get("result", {}).get("metadata", {})
+            log.info(f"  Resultados cacheados query {query_id}: {len(df)} rows")
+            return df
+        elif r.status_code == 404:
+            raise RuntimeError(f"Query {query_id} no tiene resultados cacheados. Córrela al menos una vez en Dune.")
+        else:
+            raise RuntimeError(f"Dune API error {r.status_code}: {r.text}")
+
     def run_query_id(self, query_id: int, params: dict = None) -> pd.DataFrame:
-        """Execute a saved query by ID and return results."""
-        log.info(f"Executing Dune query {query_id}...")
+        """Ejecuta una query por ID (consume créditos). Usar solo si no hay caché."""
+        log.info(f"Ejecutando Dune query {query_id}...")
         exec_id = self.execute_query(query_id, params)
         return self.wait_for_result(exec_id)
 
@@ -328,17 +350,16 @@ def extract_via_api(dune: DuneClient) -> dict:
             log.info(f"  ✓ {name}: caché fresca ({len(cached)} rows, < {max_hours}h)")
             continue
         try:
-            log.info(f"--- Ejecutando query {query_id} ({name}) ---")
-            df = dune.run_query_id(query_id)
+            log.info(f"--- Leyendo resultados cacheados query {query_id} ({name}) ---")
+            df = dune.get_latest_results(query_id)
             results[name] = df
-            log.info(f"  ✓ {name}: {len(df)} rows desde Dune")
             if not df.empty:
                 df.to_csv(path, index=False)
         except Exception as e:
             log.error(f"  ✗ Failed {name}: {e}")
             results[name] = pd.read_csv(path) if path.exists() else pd.DataFrame()
             if path.exists():
-                log.warning(f"  ↩ Usando caché vieja para {name}")
+                log.warning(f"  ↩ Usando caché local para {name}")
 
     # ── Outflows incrementales ────────────────────────────────────────────
     # Solo pide transfers nuevos desde el último timestamp procesado.
@@ -352,8 +373,8 @@ def extract_via_api(dune: DuneClient) -> dict:
         path = RAW_DIR / f"{name}.csv"
         last_ts = _load_last_ts(network)
         try:
-            log.info(f"--- Outflows incrementales {network} desde {last_ts} ---")
-            df_new = dune.run_query_id(query_id, params={"last_timestamp": last_ts})
+            log.info(f"--- Outflows cacheados {network} (último run en Dune) ---")
+            df_new = dune.get_latest_results(query_id)
             log.info(f"  ✓ {name}: {len(df_new)} rows nuevos desde Dune")
 
             # Acumular con los datos históricos existentes
@@ -771,7 +792,109 @@ def compute_global_metrics(wallet_summary: pd.DataFrame) -> dict:
 
 
 # =============================================================================
-# 5b. UNKNOWN WALLET DETECTION
+# 5b. RECONCILIACIÓN: supply × precio vs suma total de todos los holders
+# =============================================================================
+def compute_reconciliation(
+    df_supply: pd.DataFrame,
+    df_balances_all_raw: pd.DataFrame,   # todos los holders en Dune (sin filtrar)
+    df_balances_clients: pd.DataFrame,   # solo wallets de clientes monitoreados
+    prices: dict,
+) -> pd.DataFrame:
+    """
+    Cruce contable completo por token:
+      market_cap  = supply_total × precio
+      all_holders = Σ(balance_i × precio) de TODOS los wallets on-chain (Dune raw)
+      client_usd  = Σ(balance_i × precio) solo clientes registrados
+      arch_usd    = all_holders - client_usd  (contratos, pools, Arch internal)
+
+    Checks:
+      • market_cap ≈ all_holders  → si difieren mucho hay error de supply o precio
+      • client_usd ≤ market_cap   → siempre debe cumplirse
+
+    A medida que el supply baja a 0, market_cap → 0 y todo el capital fue devuelto.
+    """
+    if df_supply.empty or not prices:
+        return pd.DataFrame()
+
+    # ── 1. Supply más reciente por token ──────────────────────────────────────
+    sup = df_supply.copy()
+    sup["day"] = pd.to_datetime(sup["day"], errors="coerce")
+    latest_supply = (
+        sup.sort_values("day")
+        .groupby("label")["supply"]
+        .last()
+        .reset_index()
+        .rename(columns={"label": "token", "supply": "supply_total"})
+    )
+
+    # ── 2. Todos los holders on-chain (Dune balances_polygon crudo) ───────────
+    # Esto incluye clientes, contratos de Arch, pools, wallets desconocidas
+    if not df_balances_all_raw.empty:
+        raw = df_balances_all_raw.copy()
+        raw["base_symbol"] = raw["symbol"].map(SYMBOL_TO_BASE).fillna(raw["symbol"])
+        raw["price_usd"]   = raw["base_symbol"].map(prices).fillna(0)
+        raw["value_usd"]   = raw["balance"] * raw["price_usd"]
+        all_holders_aum = (
+            raw.groupby("base_symbol")["value_usd"]
+            .sum()
+            .reset_index()
+            .rename(columns={"base_symbol": "token", "value_usd": "all_holders_usd"})
+        )
+    else:
+        all_holders_aum = pd.DataFrame(columns=["token", "all_holders_usd"])
+
+    # ── 3. Solo clientes registrados ──────────────────────────────────────────
+    if not df_balances_clients.empty and "base_symbol" in df_balances_clients.columns:
+        client_aum = (
+            df_balances_clients.groupby("base_symbol")["value_usd"]
+            .sum()
+            .reset_index()
+            .rename(columns={"base_symbol": "token", "value_usd": "client_usd"})
+        )
+    else:
+        client_aum = pd.DataFrame(columns=["token", "client_usd"])
+
+    # ── 4. Merge y cálculos ───────────────────────────────────────────────────
+    rec = latest_supply.merge(all_holders_aum, on="token", how="left")
+    rec = rec.merge(client_aum, on="token", how="left")
+    rec["all_holders_usd"] = rec["all_holders_usd"].fillna(0)
+    rec["client_usd"]      = rec["client_usd"].fillna(0)
+    rec["precio_usd"]      = rec["token"].map(prices).fillna(0)
+    rec["market_cap_usd"]  = rec["supply_total"] * rec["precio_usd"]
+
+    # Tokens en contratos/pools/Arch (todo lo que no es cliente registrado)
+    rec["arch_other_usd"]  = (rec["all_holders_usd"] - rec["client_usd"]).clip(lower=0)
+
+    # % del market cap que ya está en manos de clientes
+    rec["pct_client"] = rec.apply(
+        lambda r: r["client_usd"] / r["market_cap_usd"] * 100
+        if r["market_cap_usd"] > 0 else 0, axis=1
+    ).round(2)
+
+    # Delta supply vs suma on-chain (debería ser ~0; si es grande → error de datos)
+    rec["delta_usd"] = rec["market_cap_usd"] - rec["all_holders_usd"]
+    rec["delta_pct"] = rec.apply(
+        lambda r: abs(r["delta_usd"]) / r["market_cap_usd"] * 100
+        if r["market_cap_usd"] > 0 else 0, axis=1
+    ).round(2)
+
+    # Alerta
+    def _alerta(r):
+        if r["market_cap_usd"] == 0:
+            return "— sin precio"
+        if r["client_usd"] > r["market_cap_usd"] * 1.05:
+            return "⚠️ Clientes > Market Cap"
+        if r["delta_pct"] > 10:
+            return "⚠️ Supply ≠ On-chain"
+        return "✓ OK"
+
+    rec["alerta"] = rec.apply(_alerta, axis=1)
+
+    return rec.sort_values("market_cap_usd", ascending=False).reset_index(drop=True)
+
+
+# =============================================================================
+# 5c. UNKNOWN WALLET DETECTION
 # =============================================================================
 def compute_unknown_wallets(
     df_bal_poly: pd.DataFrame,
@@ -1008,6 +1131,34 @@ def run_pipeline(
             json.dump(global_metrics, f, indent=2, default=str)
         log.info(f"Wallet summary updated with {len(unk_rows)} unknown wallets merged into retail")
 
+    # 11. Reconciliación: supply × precio vs suma total de todos los holders
+    # Usamos los balances crudos de Dune (todos los wallets, sin filtrar a clientes)
+    # para el cruce contable completo: market_cap ≈ all_holders ≥ client_usd
+    df_bal_poly_raw = raw_data.get("balances_polygon", pd.DataFrame())
+    df_bal_eth_raw  = raw_data.get("balances_ethereum", pd.DataFrame())
+    raw_frames = []
+    if not df_bal_poly_raw.empty:
+        raw_frames.append(df_bal_poly_raw.copy())
+    if not df_bal_eth_raw.empty:
+        raw_frames.append(df_bal_eth_raw.copy())
+    df_balances_all_raw = pd.concat(raw_frames, ignore_index=True) if raw_frames else pd.DataFrame()
+
+    df_recon = compute_reconciliation(
+        raw_data.get("supply", pd.DataFrame()),
+        df_balances_all_raw,
+        df_balances,
+        prices,
+    )
+    if not df_recon.empty:
+        df_recon.to_csv(PROCESSED_DIR / "reconciliation.csv", index=False)
+        alertas = df_recon[df_recon["alerta"].str.startswith("⚠️")]
+        if not alertas.empty:
+            log.warning(f"⚠️ Reconciliación: {len(alertas)} tokens con AUM > Market Cap:")
+            for _, row in alertas.iterrows():
+                log.warning(f"   {row['token']}: AUM ${row['aum_clientes_usd']:,.0f} > Cap ${row['market_cap_usd']:,.0f}")
+        else:
+            log.info(f"✓ Reconciliación OK: todos los tokens dentro del supply")
+
     log.info("=" * 60)
     log.info("  PIPELINE COMPLETE")
     log.info("=" * 60)
@@ -1021,6 +1172,7 @@ def run_pipeline(
         "prices": prices,
         "pools": raw_data.get("pools", pd.DataFrame()),
         "supply": raw_data.get("supply", pd.DataFrame()),
+        "reconciliation": df_recon,
     }
 
 

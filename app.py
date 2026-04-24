@@ -129,7 +129,7 @@ def load_data():
     data = {}
     mp = PROCESSED_DIR / "global_metrics.json"
     data["metrics"] = json.load(open(mp)) if mp.exists() else {}
-    for name in ["balances", "outflows", "wallet_summary", "pools", "supply", "unknown_wallets"]:
+    for name in ["balances", "outflows", "wallet_summary", "pools", "supply", "unknown_wallets", "reconciliation"]:
         path = PROCESSED_DIR / f"{name}.csv"
         if path.exists():
             df = pd.read_csv(path)
@@ -682,8 +682,8 @@ def render_tables(ws: pd.DataFrame, balances: pd.DataFrame, outflows: pd.DataFra
     n_unk = len(unknown[unknown["total_aum"] > 100]) if not unknown.empty else 0
     unk_label = f"⚠️ Sin registrar ({n_unk})" if n_unk > 0 else "Sin registrar"
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "Wallets", "Balances", "Retiros", "Análisis", "Pools", unk_label,
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "Wallets", "Balances", "Retiros", "Análisis", "Pools", unk_label, "⚖️ Reconciliación",
     ])
 
     fmt_style = {"total_balance_usd": "${:,.2f}", "total_outflow_usd": "${:,.2f}", "pct_withdrawn": "{:.1f}%"}
@@ -820,6 +820,141 @@ def render_tables(ws: pd.DataFrame, balances: pd.DataFrame, outflows: pd.DataFra
             st.markdown("**Supply desde 1 Abr 2026**")
             supply["day"] = pd.to_datetime(supply["day"], errors="coerce")
             st.dataframe(supply[supply["day"] >= pd.Timestamp("2026-04-01")], use_container_width=True)
+
+    with tab7:
+        data = load_data()
+        rec = data.get("reconciliation", pd.DataFrame())
+
+        if rec.empty:
+            st.info("Sin datos de reconciliación. Ejecutá el pipeline primero.")
+        else:
+            # ── Totales globales ──────────────────────────────────────────────
+            total_cap    = rec["market_cap_usd"].sum()
+            total_all    = rec["all_holders_usd"].sum() if "all_holders_usd" in rec.columns else 0
+            total_client = rec["client_usd"].sum() if "client_usd" in rec.columns else 0
+            total_arch   = rec["arch_other_usd"].sum() if "arch_other_usd" in rec.columns else 0
+            n_warn       = rec["alerta"].str.startswith("⚠️").sum()
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Market Cap total", f"${total_cap:,.0f}",
+                      help="supply × precio — valor de todos los tokens en circulación")
+            m2.metric("AUM clientes registrados", f"${total_client:,.0f}",
+                      help="Lo que tienen nuestros clientes monitoreados")
+            m3.metric("Arch / contratos / otros", f"${total_arch:,.0f}",
+                      help="Tokens en contratos Arch, pools, wallets no registradas")
+            m4.metric("Alertas", int(n_warn),
+                      delta=None if n_warn == 0 else "⚠️ revisar")
+
+            if n_warn > 0:
+                st.error(
+                    f"**{n_warn} token{'s' if n_warn > 1 else ''} con inconsistencia detectada.** "
+                    "Puede indicar error en el supply de Dune o en el precio NAV."
+                )
+            else:
+                st.success("Cruce OK — Market Cap ≈ suma on-chain para todos los tokens.")
+
+            # Barra visual: clientes vs arch/otros vs "no contabilizado"
+            pct_client = total_client / max(total_cap, 1) * 100
+            pct_arch   = total_arch   / max(total_cap, 1) * 100
+            st.markdown(
+                f"<div style='margin:16px 0 4px 0'>"
+                f"<div style='display:flex;gap:0;height:8px;border-radius:4px;overflow:hidden;background:#1C2333'>"
+                f"<div style='width:{pct_client:.1f}%;background:#3DD68C'></div>"
+                f"<div style='width:{pct_arch:.1f}%;background:#60A5FA'></div>"
+                f"</div>"
+                f"<div style='display:flex;gap:16px;margin-top:6px;font-size:11px;color:#4B5675'>"
+                f"<span><span style='color:#3DD68C'>●</span> Clientes {pct_client:.1f}%</span>"
+                f"<span><span style='color:#60A5FA'>●</span> Arch/otros {pct_arch:.1f}%</span>"
+                f"<span><span style='color:#1C2333'>●</span> Delta supply {100-pct_client-pct_arch:.1f}%</span>"
+                f"</div></div>",
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("---")
+
+            # ── Tabla por token ───────────────────────────────────────────────
+            TH  = "style='padding:8px 12px;font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#4B5675;border-bottom:1px solid #1C2333;text-align:right'"
+            THL = "style='padding:8px 12px;font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#4B5675;border-bottom:1px solid #1C2333'"
+            TD  = "style='padding:9px 12px;border-bottom:1px solid #111827;font-size:12px'"
+            TDR = "style='padding:9px 12px;border-bottom:1px solid #111827;font-size:12px;text-align:right;font-variant-numeric:tabular-nums'"
+
+            table_html = (
+                "<table style='width:100%;border-collapse:collapse'>"
+                "<thead><tr>"
+                f"<th {THL}>Token</th>"
+                f"<th {TH}>Supply</th>"
+                f"<th {TH}>Precio</th>"
+                f"<th {TH}>Market Cap</th>"
+                f"<th {TH}>Clientes (USD)</th>"
+                f"<th {TH}>Arch / otros</th>"
+                f"<th {TH}>Delta supply</th>"
+                f"<th {TH}>% clientes</th>"
+                f"<th {TH}>Estado</th>"
+                "</tr></thead><tbody>"
+            )
+
+            for _, row in rec.iterrows():
+                alerta = row["alerta"]
+                alerta_color = "#F87171" if alerta.startswith("⚠️") else ("#3DD68C" if alerta == "✓ OK" else "#4B5675")
+
+                pct_c    = row.get("pct_client", 0)
+                bar_w    = min(pct_c, 100)
+                bar_col  = "#3DD68C" if pct_c <= 90 else "#FBBF24" if pct_c <= 100 else "#F87171"
+                pct_bar  = (
+                    f"<div style='display:flex;align-items:center;gap:5px;justify-content:flex-end'>"
+                    f"<div style='width:50px;height:4px;background:#1C2333;border-radius:2px;overflow:hidden'>"
+                    f"<div style='width:{bar_w:.0f}%;height:100%;background:{bar_col}'></div></div>"
+                    f"<span style='color:{bar_col}'>{pct_c:.1f}%</span></div>"
+                )
+
+                delta     = row.get("delta_usd", 0)
+                delta_pct = row.get("delta_pct", 0)
+                delta_col = "#F87171" if delta_pct > 10 else "#4B5675"
+                delta_fmt = f"<span style='color:{delta_col}'>${delta:+,.0f} ({delta_pct:.1f}%)</span>"
+
+                cap_fmt  = f"${row['market_cap_usd']:,.0f}" if row['market_cap_usd'] > 0 else "—"
+                all_fmt  = f"${row.get('all_holders_usd', 0):,.0f}"
+                cli_fmt  = f"${row.get('client_usd', 0):,.0f}"
+                arch_fmt = f"${row.get('arch_other_usd', 0):,.0f}"
+                sup_fmt  = f"{row['supply_total']:,.1f}" if row['supply_total'] > 0 else "—"
+                pr_fmt   = f"${row['precio_usd']:,.4f}" if row['precio_usd'] > 0 else "—"
+
+                table_html += (
+                    f"<tr>"
+                    f"<td {TD}><span style='font-family:monospace;font-weight:700;color:#CDD5E0'>{row['token']}</span></td>"
+                    f"<td {TDR} style='color:#6B7A99'>{sup_fmt}</td>"
+                    f"<td {TDR} style='color:#9CA3AF'>{pr_fmt}</td>"
+                    f"<td {TDR} style='color:#9CA3AF'>{cap_fmt}</td>"
+                    f"<td {TDR} style='color:#3DD68C'>{cli_fmt}</td>"
+                    f"<td {TDR} style='color:#60A5FA'>{arch_fmt}</td>"
+                    f"<td {TDR}>{delta_fmt}</td>"
+                    f"<td {TDR}>{pct_bar}</td>"
+                    f"<td style='padding:9px 12px;border-bottom:1px solid #111827;font-size:12px;text-align:right;font-weight:600;color:{alerta_color}'>{alerta}</td>"
+                    f"</tr>"
+                )
+
+            table_html += "</tbody></table>"
+            st.markdown(table_html, unsafe_allow_html=True)
+
+            st.markdown(
+                "<div style='font-size:11px;color:#2D3650;margin-top:16px;padding:10px 14px;border:1px solid #1C2333;border-radius:6px;line-height:1.7'>"
+                "ℹ️ <b>Metodología:</b> "
+                "<b>Market Cap</b> = supply total × precio actual (lo que valen todos los tokens en circulación). "
+                "<b>Clientes</b> = wallets registradas en los CSVs. "
+                "<b>Arch / otros</b> = contratos Arch, pools de liquidez, wallets no registradas. "
+                "<b>Delta supply</b> = Market Cap − suma on-chain (debería ser ≈ $0). "
+                "A medida que los clientes rediman, el supply baja y el Market Cap tiende a $0."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+            st.download_button(
+                "Descargar reconciliación CSV",
+                rec.to_csv(index=False),
+                "reconciliacion.csv",
+                "text/csv",
+            )
 
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
