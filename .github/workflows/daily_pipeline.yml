@@ -1,7 +1,8 @@
 name: Pipeline Update
 
 on:
-  workflow_dispatch:   # Solo manual — correr desde GitHub Actions → Run workflow
+  workflow_dispatch:  # MANUAL ONLY — run from GitHub Actions → Run workflow
+  # schedule REMOVED — do not add cron here, it will consume Dune credits automatically
 
 jobs:
   run-pipeline:
