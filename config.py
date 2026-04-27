@@ -133,16 +133,15 @@ ALL_TOKENS_POLYGON = {
 # ARCH TOKENS - ETHEREUM (direct tokens, held by preferente clients)
 # =============================================================================
 TOKENS_ETHEREUM = {
-    "0x8f0d5660929ca6ac394c5c41f59497629b1dbc23": {"symbol": "WEB3", "decimals": 18},
-    "0x89c53b02558e4d1c24cb5aac8d735db3a654b30b": {"symbol": "CHAIN", "decimals": 18},  # reconstructed
-    "0xd1ce69b4bdd3dda553ea55a2a57c21c65190f3d5": {"symbol": "ACAI", "decimals": 18},
-    "0xe15a66b7b8e385caa6f69fd0d55984b96d7263cf": {"symbol": "ADDY", "decimals": 18},
-    "0x103bb3ebc6f61b3db2d6e01e54ef7d9899a2e16b": {"symbol": "AEDY", "decimals": 18},
-    "0xde2925d582fc8711a0e93271c12615bdd043ed1c": {"symbol": "ABDY", "decimals": 18},
-    "0xf436e681574220471fc72e42ae33564512dafd06": {"symbol": "ARWA", "decimals": 18},
+    "0x8f0d5660929ca6ac394c5c41f59497629b1dbc23": {"symbol": "WEB3",      "decimals": 18},
+    "0x89c53b02558e4d1c24b9bf3bed1279871187ef0b": {"symbol": "CHAIN",     "decimals": 18},
+    "0xd1ce69b4bdd3dda553ea55a2a57c21c65190f3d5": {"symbol": "ACAI",      "decimals": 18},
+    "0xe15a66b7b8e385caa6f69fd0d55984b96d7263cf": {"symbol": "ADDY",      "decimals": 18},
+    "0x103bb3ebc6f61b3db2d6e01e54ef7d9899a2e16b": {"symbol": "AEDY",      "decimals": 18},
+    "0xde2925d582fc8711a0e93271c12615bdd043ed1c": {"symbol": "ABDY",      "decimals": 18},
     # SET versions
     "0x0d20e86abab680c038ac8bbdc1446585e67f8951": {"symbol": "CHAIN_SET", "decimals": 18},
-    "0xe8e8486228753e01dbc222da262aa706bd67e601": {"symbol": "WEB3_SET", "decimals": 18},
+    "0xe8e8486228753e01dbc222da262aa706bd67e601": {"symbol": "WEB3_SET",  "decimals": 18},
 }
 
 # =============================================================================
@@ -209,7 +208,6 @@ SYMBOL_TO_BASE = {
     "ABDY": "ABDY", "ABDY_PROD": "ABDY", "ABDY_V1": "ABDY",
     "ADDY": "ADDY", "ADDY_PROD": "ADDY",
     "AEDY": "AEDY", "AEDY_PROD": "AEDY",
-    "ARWA": "ARWA",
     "AAGG": "AAGG", "AMOD": "AMOD", "ABAL": "ABAL", "AP60": "AP60",
 }
 
