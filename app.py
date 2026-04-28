@@ -129,6 +129,8 @@ def load_data():
     data = {}
     mp = PROCESSED_DIR / "global_metrics.json"
     data["metrics"] = json.load(open(mp)) if mp.exists() else {}
+    pp = PROCESSED_DIR / "prices.json"
+    data["prices"] = json.load(open(pp)) if pp.exists() else {}
     for name in ["balances", "outflows", "wallet_summary", "pools", "supply", "unknown_wallets", "reconciliation", "contract_balances"]:
         path = PROCESSED_DIR / f"{name}.csv"
         if path.exists():
@@ -267,24 +269,26 @@ def render_overview(ws: pd.DataFrame):
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     data = load_data()
 
-    # Recopilar precios: pools para base tokens, balances para vault NAV
-    prices_display = {}
-    pools = data.get("pools", pd.DataFrame())
-    if not pools.empty and "token" in pools.columns and "price" in pools.columns:
-        for _, r in pools[pools["token"] != "USDC"].iterrows():
-            try:
-                prices_display[r["token"]] = float(r["price"])
-            except (ValueError, TypeError):
-                pass
+    # Precios desde prices.json si existe (generado por el pipeline, fuente primaria)
+    prices_display = {k: v for k, v in data.get("prices", {}).items() if v > 0}
 
-    balances = data.get("balances", pd.DataFrame())
-    if not balances.empty and "base_symbol" in balances.columns and "price_usd" in balances.columns:
-        for sym in ["AAGG", "AMOD", "ABAL", "AP60"]:
-            rows = balances[balances["base_symbol"] == sym]
-            if not rows.empty:
-                p = rows["price_usd"].iloc[0]
-                if p > 0:
-                    prices_display[sym] = float(p)
+    # Fallback si prices.json aún no existe: leer pools + balances (comportamiento anterior)
+    if not prices_display:
+        pools_fb = data.get("pools", pd.DataFrame())
+        if not pools_fb.empty and "token" in pools_fb.columns and "price" in pools_fb.columns:
+            for _, r in pools_fb[pools_fb["token"] != "USDC"].iterrows():
+                try:
+                    prices_display[r["token"]] = float(r["price"])
+                except (ValueError, TypeError):
+                    pass
+        bal_fb = data.get("balances", pd.DataFrame())
+        if not bal_fb.empty and "base_symbol" in bal_fb.columns and "price_usd" in bal_fb.columns:
+            for sym in ["AAGG", "AMOD", "ABAL", "AP60"]:
+                rows = bal_fb[bal_fb["base_symbol"] == sym]
+                if not rows.empty:
+                    p = rows["price_usd"].iloc[0]
+                    if p > 0:
+                        prices_display[sym] = float(p)
 
     TOKEN_COLORS = {
         "WEB3": "#10B981", "CHAIN": "#3B82F6", "ABDY": "#8B5CF6",

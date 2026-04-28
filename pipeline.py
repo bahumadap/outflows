@@ -1152,6 +1152,10 @@ def run_pipeline(
     prices = process_prices(
         df_pools=raw_data.get("pools", pd.DataFrame()),
     )
+    # Guardar precios en archivo dedicado para que el dashboard los lea directamente
+    with open(PROCESSED_DIR / "prices.json", "w") as f:
+        json.dump(prices, f, indent=2)
+    log.info(f"Precios guardados en prices.json: {len(prices)} tokens")
 
     # 4. Process balances
     df_balances = process_balances(
