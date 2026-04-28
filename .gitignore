@@ -7,6 +7,9 @@ __pycache__/
 
 # Raw Dune CSVs (se regeneran desde la API, no hace falta versionar)
 data/raw/
+# Excepción: outflows acumulados — necesarios para que el deploy cloud tenga historial completo
+!data/raw/outflows_polygon.csv
+!data/raw/outflows_ethereum.csv
 
 # Archivos temporales de Python/OS
 .DS_Store
