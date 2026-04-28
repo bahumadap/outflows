@@ -996,6 +996,180 @@ def render_tables(ws: pd.DataFrame, balances: pd.DataFrame, outflows: pd.DataFra
 
             st.markdown("---")
 
+            # ── Vista de Calce ────────────────────────────────────────────────
+            st.markdown(
+                "<div style='font-size:10px;font-weight:700;letter-spacing:0.1em;"
+                "text-transform:uppercase;color:#4B5675;margin-bottom:16px'>"
+                "Vista de Calce — Market Cap vs Remanente Total</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "<div style='font-size:11px;color:#4B5675;margin-bottom:16px;line-height:1.6'>"
+                "Verificá si: <b style='color:#9CA3AF'>Market Cap tokens ETH + ABDY_V1 (POL)</b> "
+                "= <b style='color:#3DD68C'>Total remanente clientes</b>. "
+                "Usá los filtros para ver solo ETH, solo Polygon, o tokens individuales."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Clasificar tokens por red de supply para el calce:
+            # - "ETH"  → tiene supply en Ethereum (usamos market_cap_eth para el calce)
+            # - "POL"  → solo existe en Polygon, sin supply ETH (usamos market_cap_pol)
+            # Tokens con supply en ambas redes se clasifican como "ETH" porque la fórmula
+            # de calce usa solo el market cap ETH (el lado POL son los _PROD wrappers).
+            rec_c = rec.copy()
+            for _col in ["supply_eth", "supply_pol", "market_cap_eth", "market_cap_pol", "market_cap_usd"]:
+                if _col not in rec_c.columns:
+                    rec_c[_col] = 0.0
+                rec_c[_col] = rec_c[_col].fillna(0.0)
+
+            def _tok_net(row):
+                if row["supply_eth"] > 0: return "ETH"
+                if row["supply_pol"] > 0: return "POL"
+                return "—"
+            rec_c["_network"] = rec_c.apply(_tok_net, axis=1)
+
+            # Default del calce:
+            #   - Tokens con supply_eth > 0 → usan market_cap_eth
+            #     (incluye CHAIN_PROD si es el portador único del supply ETH de CHAIN)
+            #   - ABDY_V1 → usa market_cap_pol (token legacy polygon, no es wrapper de ABDY)
+            #   - _PROD con supply_eth = 0 → EXCLUIDOS (son wrappers polygon del base ETH;
+            #     sumarlos sería doble-contar la misma exposición económica)
+            #   - Vault tokens (AAGG/AMOD/ABAL/AP60) → EXCLUIDOS del calce base
+            _eth_supply_toks = set(rec_c[rec_c["supply_eth"] > 0]["token"].tolist())
+            tok_opts_c = rec_c["token"].tolist()
+            default_toks_c = [
+                t for t in tok_opts_c
+                if t in _eth_supply_toks or t == "ABDY_V1"
+            ]
+
+            # Filtros de la vista de calce
+            cf1, cf2 = st.columns([1, 3])
+            with cf1:
+                net_opts_c = [n for n in ["ETH", "POL"] if n in rec_c["_network"].values]
+                sel_nets_c = st.multiselect(
+                    "Red de supply", net_opts_c, default=net_opts_c,
+                    key="calce_net",
+                    help="ETH = market cap en Ethereum (supply_eth × precio) | POL = solo tokens que únicamente existen en Polygon (ABDY_V1, vaults)",
+                )
+            with cf2:
+                sel_toks_c = st.multiselect(
+                    "Tokens", tok_opts_c, default=default_toks_c,
+                    key="calce_tok",
+                    help="Por defecto: tokens ETH (supply_eth > 0) + ABDY_V1. Los _PROD wrappers y vaults están excluidos — agregarlos manualmente si querés verlos.",
+                )
+
+            _nets_active  = sel_nets_c if sel_nets_c else net_opts_c
+            _toks_active  = sel_toks_c if sel_toks_c else default_toks_c
+            calce_df = rec_c[
+                rec_c["_network"].isin(_nets_active) &
+                rec_c["token"].isin(_toks_active)
+            ].copy()
+
+            # Contribución de market cap según la fórmula de calce:
+            # - Si tiene supply ETH → usar market_cap_eth (aunque también tenga supply POL)
+            # - Si solo tiene supply POL → usar market_cap_pol (ej. ABDY_V1, vaults)
+            def _cap_contrib(row):
+                if row["supply_eth"] > 0:
+                    return row["market_cap_eth"]
+                return row["market_cap_pol"]
+
+            calce_df["_market_cap_red"] = calce_df.apply(_cap_contrib, axis=1)
+
+            # Supply que corresponde a la red del calce
+            def _sup_red(row):
+                if row["supply_eth"] > 0: return row["supply_eth"]
+                return row["supply_pol"]
+            calce_df["_supply_red"] = calce_df.apply(_sup_red, axis=1)
+
+            # Métricas de calce
+            total_rem_ws   = ws["total_balance_usd"].sum() if not ws.empty else rec["remanente_usd"].sum()
+            sum_cap_calce  = calce_df["_market_cap_red"].sum()
+            sum_rem_calce  = calce_df["remanente_usd"].sum()
+            delta_calce    = sum_cap_calce - total_rem_ws
+            delta_pct_c    = delta_calce / max(sum_cap_calce, 1) * 100
+            pct_rem_cap    = sum_rem_calce / max(sum_cap_calce, 1) * 100
+            calce_ok_c     = abs(delta_pct_c) < 5  # tolerancia 5%
+
+            cc1, cc2, cc3, cc4 = st.columns(4)
+            cc1.metric("Market Cap filtrado", f"${sum_cap_calce:,.0f}",
+                       help="Supply en la red seleccionada × precio")
+            cc2.metric("Remanente total clientes", f"${total_rem_ws:,.0f}",
+                       help="Total del overview — todos los segmentos")
+            cc3.metric("Δ Cap − Remanente", f"${delta_calce:+,.0f}",
+                       delta=f"{delta_pct_c:+.1f}%",
+                       delta_color="normal" if abs(delta_pct_c) < 5 else "inverse")
+            cc4.metric("Calce", "✓ Cuadra" if calce_ok_c else "⚠️ Revisar",
+                       delta=f"{pct_rem_cap:.1f}% del cap cubierto")
+
+            # Tabla de calce
+            CTH  = "style='padding:7px 10px;font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#4B5675;border-bottom:1px solid #1C2333;text-align:right'"
+            CTHL = "style='padding:7px 10px;font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#4B5675;border-bottom:1px solid #1C2333'"
+            CTD  = "style='padding:7px 10px;border-bottom:1px solid #111827;font-size:12px'"
+            CTDR = "style='padding:7px 10px;border-bottom:1px solid #111827;font-size:12px;text-align:right;font-variant-numeric:tabular-nums'"
+
+            ctable = (
+                "<table style='width:100%;border-collapse:collapse;margin-top:12px'>"
+                "<thead><tr>"
+                f"<th {CTHL}>Token</th>"
+                f"<th {CTH}>Red</th>"
+                f"<th {CTH}>Supply en red</th>"
+                f"<th {CTH}>Precio USD</th>"
+                f"<th {CTH}>Market Cap</th>"
+                "</tr></thead><tbody>"
+            )
+
+            for _, crow in calce_df.iterrows():
+                net_color = "#3B82F6" if crow["_network"] == "ETH" else "#8B5CF6" if crow["_network"] == "POL" else "#9CA3AF"
+                sup_v = crow["_supply_red"]
+                cap_v = crow["_market_cap_red"]
+                prc_v = crow.get("precio_usd", 0)
+                ctable += (
+                    f"<tr>"
+                    f"<td {CTD}><span style='font-family:monospace;font-weight:700;color:#CDD5E0'>{crow['token']}</span></td>"
+                    f"<td {CTDR}><span style='color:{net_color};font-weight:600;font-size:11px;letter-spacing:0.04em'>{crow['_network']}</span></td>"
+                    f"<td {CTDR} style='color:#6B7A99'>{sup_v:,.1f}</td>"
+                    f"<td {CTDR} style='color:#9CA3AF'>${prc_v:,.4f}</td>"
+                    f"<td {CTDR} style='color:#CDD5E0;font-weight:600'>${cap_v:,.0f}</td>"
+                    f"</tr>"
+                )
+
+            # Fila total calce
+            CTF  = "style='padding:8px 10px;font-size:12px;font-weight:700;color:#CDD5E0;text-align:right;border-top:2px solid #2D3650;background:#111827'"
+            CTFL = "style='padding:8px 10px;font-size:12px;font-weight:700;color:#CDD5E0;border-top:2px solid #2D3650;background:#111827'"
+            ctable += (
+                f"<tfoot><tr>"
+                f"<td {CTFL}>TOTAL</td>"
+                f"<td {CTF}>—</td>"
+                f"<td {CTF}>—</td>"
+                f"<td {CTF}>—</td>"
+                f"<td style='padding:8px 10px;font-size:12px;font-weight:700;color:#CDD5E0;text-align:right;border-top:2px solid #2D3650;background:#111827'>${sum_cap_calce:,.0f}</td>"
+                f"</tr></tfoot>"
+            )
+            ctable += "</tbody></table>"
+            st.markdown(ctable, unsafe_allow_html=True)
+
+            st.markdown(
+                "<div style='font-size:11px;color:#2D3650;margin-top:12px;margin-bottom:4px;"
+                "padding:8px 12px;border:1px solid #1C2333;border-radius:6px;line-height:1.7'>"
+                "ℹ️ <b>Cómo leer este calce:</b> "
+                "Market Cap = supply en la red × precio. "
+                "Por defecto: tokens con supply en ETH + ABDY_V1 (POL). "
+                "Los _PROD wrappers están excluidos — agregarlos manualmente si querés verlos."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("---")
+
+            # ── Detalle Completo por Token ─────────────────────────────────────
+            st.markdown(
+                "<div style='font-size:10px;font-weight:700;letter-spacing:0.1em;"
+                "text-transform:uppercase;color:#4B5675;margin-bottom:12px'>"
+                "Detalle Completo por Token</div>",
+                unsafe_allow_html=True,
+            )
+
             # ── Tabla por token ───────────────────────────────────────────────
             TH  = "style='padding:8px 12px;font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#4B5675;border-bottom:1px solid #1C2333;text-align:right'"
             THL = "style='padding:8px 12px;font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#4B5675;border-bottom:1px solid #1C2333'"

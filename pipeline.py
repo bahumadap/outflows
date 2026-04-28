@@ -427,23 +427,37 @@ def fetch_gsheet_prices() -> dict:
         resp.raise_for_status()
         from io import StringIO
         df = pd.read_csv(StringIO(resp.text))
-        # Tomar la última fila no vacía
-        df = df.dropna(subset=["Date"])
+        # Normalizar nombres de columna: strip + uppercase para matching robusto
+        col_map = {c.strip().upper(): c for c in df.columns}
+        df.columns = [c.strip() for c in df.columns]
+
+        # Detectar columna de fecha (primera columna o la que se llame Date/Fecha)
+        date_col = df.columns[0]
+        for candidate in ["Date", "Fecha", "DATE", "date"]:
+            if candidate in df.columns:
+                date_col = candidate
+                break
+
+        df = df.dropna(subset=[date_col])
         if df.empty:
             log.warning("Google Sheet de precios vacío")
             return {}
         last = df.iloc[-1]
         prices = {}
+        # Matching case-insensitive con strip
+        sheet_cols_upper = {c.strip().upper(): c.strip() for c in df.columns}
         for col in GSHEET_PRICE_COLUMNS:
-            if col in df.columns:
+            actual_col = sheet_cols_upper.get(col.upper())
+            if actual_col and actual_col in last.index:
                 try:
-                    val = float(last[col])
+                    val = float(last[actual_col])
                     if val > 0:
                         prices[col] = val
                 except (ValueError, TypeError):
                     pass
-        date_str = str(last.get("Date", "?"))
+        date_str = str(last.get(date_col, "?"))
         log.info(f"Precios desde Google Sheet ({date_str}): { {k: round(v,4) for k,v in prices.items()} }")
+        log.info(f"  Columnas sheet: {list(df.columns)}")
         return prices
     except Exception as e:
         log.error(f"No se pudo obtener precios de Google Sheet: {e}")
@@ -809,80 +823,81 @@ def compute_reconciliation(
     df_outflows: pd.DataFrame = None,    # retiros de clientes registrados
 ) -> pd.DataFrame:
     """
-    Desglose por token usando los MISMOS datos que el overview (balances + outflows de clientes).
-    Garantiza consistencia total: remanente aquí = remanente en la pantalla principal.
+    Desglose por símbolo exacto — cada variante de token en su propia fila.
+    WEB3, WEB3_PROD, WEB3_SET aparecen separados.
 
     Columnas:
-      token         → símbolo base (WEB3, CHAIN, ABDY, etc.)
-      precio_usd    → precio actual
-      remanente_usd → lo que aún tienen los clientes (de balances.csv)
-      retirado_usd  → lo que ya retiraron desde el 1 Abr (de outflows.csv, sin internos)
-      historico_usd → remanente + retirado (AUM inicial estimado)
+      token         → símbolo exacto (WEB3, WEB3_PROD, WEB3_SET, ABDY_V1, etc.)
+      precio_usd    → precio actual (via SYMBOL_TO_BASE para lookup)
+      remanente_usd → lo que aún tienen los clientes
+      retirado_usd  → lo que ya retiraron desde el 1 Abr
+      historico_usd → remanente + retirado
       pct_retirado  → % ya retirado del histórico
-      alerta        → ✓ OK / ⚠️ si hay dato inconsistente
+      alerta        → ✓ OK / ⚠️
     """
     if df_balances_clients.empty or not prices:
         return pd.DataFrame()
 
-    # ── 1. Remanente por token (desde balances de clientes) ───────────────────
-    bal = df_balances_clients.copy()
-    if "base_symbol" not in bal.columns:
-        bal["base_symbol"] = bal["symbol"].map(SYMBOL_TO_BASE).fillna(bal["symbol"])
+    # Mapeo símbolo → label de supply (SET y V1 se mapean a sí mismos, _PROD al base)
+    SYMBOL_TO_SUPPLY_LABEL = {
+        "WEB3": "WEB3",   "WEB3_PROD": "WEB3",   "WEB3_SET": "WEB3_SET",
+        "CHAIN": "CHAIN", "CHAIN_PROD": "CHAIN",  "CHAIN_SET": "CHAIN_SET",
+        "ACAI": "ACAI",   "ACAI_PROD": "ACAI",
+        "ABDY": "ABDY",   "ABDY_PROD": "ABDY",   "ABDY_V1": "ABDY_V1",
+        "ADDY": "ADDY",   "ADDY_PROD": "ADDY",
+        "AEDY": "AEDY",   "AEDY_PROD": "AEDY",
+        "AAGG": "AAGG",   "AMOD": "AMOD",         "ABAL": "ABAL",  "AP60": "AP60",
+    }
 
+    # ── 1. Remanente por símbolo exacto ──────────────────────────────────────
+    bal = df_balances_clients.copy()
     remanente = (
-        bal.groupby("base_symbol")
+        bal.groupby("symbol")
         .agg(
             remanente_tokens=("balance", "sum"),
             remanente_usd=("value_usd", "sum"),
             holders=("wallet_address", "nunique"),
         )
         .reset_index()
-        .rename(columns={"base_symbol": "token"})
+        .rename(columns={"symbol": "token"})
     )
 
-    # ── 2. Retirado por token (desde outflows, sin transferencias internas) ───
+    # ── 2. Retirado por símbolo exacto ───────────────────────────────────────
     if df_outflows is not None and not df_outflows.empty:
-        of = df_outflows[~df_outflows.get("is_internal_transfer", pd.Series(False, index=df_outflows.index))].copy()
-        if "base_symbol" not in of.columns:
-            of["base_symbol"] = of["symbol"].map(SYMBOL_TO_BASE).fillna(of["symbol"])
+        is_internal = df_outflows.get("is_internal_transfer", pd.Series(False, index=df_outflows.index))
+        is_internal = is_internal.fillna(False).astype(bool)
+        of = df_outflows[~is_internal].copy()
         retirado = (
-            of.groupby("base_symbol")
+            of.groupby("symbol")
             .agg(
                 retirado_tokens=("amount", "sum"),
                 retirado_usd=("value_usd", "sum"),
                 num_txs=("tx_hash", "nunique"),
             )
             .reset_index()
-            .rename(columns={"base_symbol": "token"})
+            .rename(columns={"symbol": "token"})
         )
     else:
         retirado = pd.DataFrame(columns=["token", "retirado_tokens", "retirado_usd", "num_txs"])
 
-    # ── 3. Supply más reciente por token y red ────────────────────────────────
+    # ── 3. Supply más reciente por label y red ───────────────────────────────
     if not df_supply.empty and "label" in df_supply.columns and "supply" in df_supply.columns:
         sup = df_supply.copy()
         sup["day"] = pd.to_datetime(sup["day"], errors="coerce", utc=False)
         has_network = "network" in sup.columns
 
         if has_network:
-            # Normalizar label usando SYMBOL_TO_BASE (ej. ABDY_V1 → ABDY)
-            sup["label"] = sup["label"].map(SYMBOL_TO_BASE).fillna(sup["label"])
-            # Supply por red — sumar variantes del mismo token y tomar el último valor
+            # NO aplicar SYMBOL_TO_BASE — mantener labels exactos (WEB3_SET ≠ WEB3)
             latest_by_net = (
                 sup.sort_values("day")
-                .groupby(["label", "network", "day"])["supply"]
-                .sum()
-                .reset_index()
-                .groupby(["label", "network"])
-                .last()
-                .reset_index()
+                .groupby(["label", "network", "day"])["supply"].sum().reset_index()
+                .groupby(["label", "network"]).last().reset_index()
             )
-            # Pivot: columnas supply_ethereum y supply_polygon
             latest_supply = latest_by_net.pivot(
                 index="label", columns="network", values="supply"
             ).reset_index()
             latest_supply.columns.name = None
-            latest_supply = latest_supply.rename(columns={"label": "token"})
+            latest_supply = latest_supply.rename(columns={"label": "supply_label"})
             if "ethereum" not in latest_supply.columns:
                 latest_supply["ethereum"] = 0
             if "polygon" not in latest_supply.columns:
@@ -893,32 +908,73 @@ def compute_reconciliation(
             })
             latest_supply["supply_total"] = latest_supply["supply_eth"].fillna(0) + latest_supply["supply_pol"].fillna(0)
         else:
-            # Formato viejo sin columna network → todo es supply_total
             latest_supply = (
-                sup.sort_values("day")
-                .groupby("label")["supply"]
-                .last()
-                .reset_index()
-                .rename(columns={"label": "token", "supply": "supply_total"})
+                sup.sort_values("day").groupby("label")["supply"].last().reset_index()
+                .rename(columns={"label": "supply_label", "supply": "supply_total"})
             )
             latest_supply["supply_eth"] = 0
             latest_supply["supply_pol"] = 0
     else:
-        latest_supply = pd.DataFrame(columns=["token", "supply_total", "supply_eth", "supply_pol"])
+        latest_supply = pd.DataFrame(columns=["supply_label", "supply_total", "supply_eth", "supply_pol"])
 
     # ── 4. Merge y cálculos ───────────────────────────────────────────────────
     rec = remanente.merge(retirado, on="token", how="outer").fillna(0)
-    rec = rec.merge(latest_supply, on="token", how="left")
+
+    # Mapear cada token a su supply label y hacer merge
+    rec["supply_label"] = rec["token"].map(SYMBOL_TO_SUPPLY_LABEL).fillna(rec["token"])
+    rec = rec.merge(latest_supply, on="supply_label", how="left")
+
     for col in ["supply_total", "supply_eth", "supply_pol"]:
         if col not in rec.columns:
             rec[col] = 0
         rec[col] = rec[col].fillna(0)
-    rec["precio_usd"]     = rec["token"].map(prices).fillna(0)
+
+    # ── Limpiar supply por red según dónde existe cada token ─────────────────
+    # Regla: solo zerear supply_eth de un _PROD si su token base (CHAIN, AEDY…)
+    # YA tiene fila propia en rec. Si no hay fila base, el _PROD es el único
+    # portador del supply ETH y hay que mantenerlo (ej. CHAIN_PROD cuando no
+    # hay clientes con CHAIN directo en ETH).
+    # Análogamente, solo zerear supply_pol del base si existe la fila _PROD.
+
+    tokens_in_rec = set(rec["token"])
+
+    PROD_TOKENS   = {"WEB3_PROD", "CHAIN_PROD", "ACAI_PROD", "ADDY_PROD",
+                     "AEDY_PROD", "ABDY_PROD"}
+    LEGACY_TOKENS = {"ABDY_V1"}
+    POL_ONLY_ALWAYS = {"AAGG", "AMOD", "ABAL", "AP60"}  # nunca existen en ETH
+
+    for tok in PROD_TOKENS:
+        base = tok.replace("_PROD", "")
+        if base in tokens_in_rec:
+            # El token base tiene su propia fila → el _PROD no debe mostrar supply_eth
+            rec.loc[rec["token"] == tok, "supply_eth"] = 0
+        # Si el base NO existe: el _PROD mantiene supply_eth (es el único portador)
+
+    for tok in LEGACY_TOKENS:
+        rec.loc[rec["token"] == tok, "supply_eth"] = 0  # V1 solo en Polygon
+
+    for tok in POL_ONLY_ALWAYS:
+        rec.loc[rec["token"] == tok, "supply_eth"] = 0  # portfolios: Polygon only
+
+    # Zerear supply_pol del base ETH solo si existe la fila _PROD correspondiente
+    ETH_BASE_TOKENS = {"WEB3", "CHAIN", "ACAI", "ADDY", "AEDY", "ABDY"}
+    for tok in ETH_BASE_TOKENS:
+        prod = tok + "_PROD"
+        if prod in tokens_in_rec:
+            rec.loc[rec["token"] == tok, "supply_pol"] = 0
+        # Si no existe _PROD: el base mantiene supply_pol (poco probable pero seguro)
+
+    # Recalcular supply_total coherente con la corrección
+    rec["supply_total"] = rec["supply_eth"] + rec["supply_pol"]
+
+    # Precio via SYMBOL_TO_BASE (WEB3_SET → WEB3 price, etc.)
+    rec["precio_usd"]     = rec["token"].map(SYMBOL_TO_BASE).map(prices).fillna(
+                            rec["token"].map(prices)).fillna(0)
     rec["market_cap_eth"] = rec["supply_eth"] * rec["precio_usd"]
     rec["market_cap_pol"] = rec["supply_pol"] * rec["precio_usd"]
     rec["market_cap_usd"] = rec["supply_total"] * rec["precio_usd"]
-    rec["historico_usd"] = rec["remanente_usd"] + rec["retirado_usd"]
-    rec["pct_retirado"]  = rec.apply(
+    rec["historico_usd"]  = rec["remanente_usd"] + rec["retirado_usd"]
+    rec["pct_retirado"]   = rec.apply(
         lambda r: r["retirado_usd"] / r["historico_usd"] * 100
         if r["historico_usd"] > 0 else 0, axis=1
     ).round(2)
@@ -926,7 +982,6 @@ def compute_reconciliation(
         lambda r: r["remanente_usd"] / r["market_cap_usd"] * 100
         if r["market_cap_usd"] > 0 else 0, axis=1
     ).round(1)
-
     rec["alerta"] = rec.apply(
         lambda r: "⚠️ Sin precio" if r["precio_usd"] == 0
         else ("⚠️ Remanente > Market Cap" if r["market_cap_usd"] > 0 and r["remanente_usd"] > r["market_cap_usd"] * 1.05
@@ -936,7 +991,29 @@ def compute_reconciliation(
     )
 
     rec = rec[(rec["precio_usd"] > 0) & (rec["historico_usd"] > 0)]
-    return rec.sort_values("historico_usd", ascending=False).reset_index(drop=True)
+
+    # ── Ordenar: agrupar variantes del mismo token (AEDY con AEDY_PROD, etc.) ─
+    # Calcular AUM total del grupo base para ordenar grupos entre sí
+    def _base_group(t):
+        return t.replace("_PROD", "").replace("_V1", "").replace("_SET", "")
+    def _variant_rank(t):
+        # base primero, luego _PROD, luego _SET, luego _V1
+        if t.endswith("_V1"):   return 3
+        if t.endswith("_SET"):  return 2
+        if t.endswith("_PROD"): return 1
+        return 0
+
+    rec["_base_group"]    = rec["token"].apply(_base_group)
+    rec["_variant_rank"]  = rec["token"].apply(_variant_rank)
+    group_totals          = rec.groupby("_base_group")["historico_usd"].sum()
+    rec["_group_total"]   = rec["_base_group"].map(group_totals)
+
+    rec = rec.sort_values(
+        ["_group_total", "_base_group", "_variant_rank"],
+        ascending=[False, True, True],
+    ).drop(columns=["_base_group", "_variant_rank", "_group_total"]).reset_index(drop=True)
+
+    return rec
 
 
 # =============================================================================
@@ -1231,14 +1308,52 @@ def run_pipeline(
             json.dump(global_metrics, f, indent=2, default=str)
         log.info(f"Wallet summary: {len(unk_rows)} wallets sin registro agregadas como tercer segmento")
 
-    # 11. Reconciliación por token: mismo origen de datos que el overview.
-    #     remanente_usd + retirado_usd = histórico_usd (mismos datos que balances.csv / outflows.csv)
+    # 11. Reconciliación por token: incluye TODOS los holders (registrados + sin_registro).
+    #     Los wallets sin registro tienen tokens reales — deben entrar en la reconciliación.
+    #     Solo se excluyen los contratos de Arch (ya filtrados en compute_unknown_wallets).
+    df_balances_for_recon = df_balances.copy()
+    df_outflows_for_recon = df_outflows.copy() if df_outflows is not None and not df_outflows.empty else pd.DataFrame()
+
+    if not df_unknown.empty:
+        unk_addrs = set(df_unknown["wallet_address"].str.lower())
+
+        # Balances por token de wallets sin registro
+        df_bal_poly_raw = raw_data.get("balances_polygon", pd.DataFrame())
+        if not df_bal_poly_raw.empty:
+            unk_bal = df_bal_poly_raw[df_bal_poly_raw["wallet"].str.lower().isin(unk_addrs)].copy()
+            if not unk_bal.empty:
+                unk_bal["wallet_address"] = unk_bal["wallet"].str.lower()
+                unk_bal["base_symbol"]    = unk_bal["symbol"].map(SYMBOL_TO_BASE).fillna(unk_bal["symbol"])
+                unk_bal["price_usd"]      = unk_bal["base_symbol"].map(prices).fillna(0)
+                unk_bal["value_usd"]      = unk_bal["balance"] * unk_bal["price_usd"]
+                unk_bal["segment"]        = "sin_registro"
+                unk_bal["network"]        = "polygon"
+                unk_bal["customer_name"]  = ""
+                unk_bal["email"]          = ""
+                df_balances_for_recon = pd.concat([df_balances_for_recon, unk_bal], ignore_index=True)
+
+        # Outflows de wallets sin registro
+        df_out_poly_raw = raw_data.get("outflows_polygon", pd.DataFrame())
+        if not df_out_poly_raw.empty:
+            unk_out = df_out_poly_raw[df_out_poly_raw["wallet_from"].str.lower().isin(unk_addrs)].copy()
+            if not unk_out.empty:
+                unk_out["wallet_from"]       = unk_out["wallet_from"].str.lower()
+                unk_out["base_symbol"]       = unk_out["symbol"].map(SYMBOL_TO_BASE).fillna(unk_out["symbol"])
+                unk_out["price_usd"]         = unk_out["base_symbol"].map(prices).fillna(0)
+                unk_out["value_usd"]         = unk_out["amount"] * unk_out["price_usd"]
+                unk_out["segment"]              = "sin_registro"
+                unk_out["destination_type"]    = unk_out["wallet_to"].apply(classify_outflow_destination)
+                unk_out["is_internal_transfer"] = False
+                # Excluir transfers entre unknown wallets (internos)
+                unk_out = unk_out[~unk_out["wallet_to"].str.lower().isin(unk_addrs)]
+                df_outflows_for_recon = pd.concat([df_outflows_for_recon, unk_out], ignore_index=True)
+
     df_recon = compute_reconciliation(
         raw_data.get("supply", pd.DataFrame()),
         pd.DataFrame(),   # df_balances_all_raw no se usa
-        df_balances,
+        df_balances_for_recon,
         prices,
-        df_outflows=df_outflows,
+        df_outflows=df_outflows_for_recon,
     )
     if not df_recon.empty:
         df_recon.to_csv(PROCESSED_DIR / "reconciliation.csv", index=False)
