@@ -856,7 +856,7 @@ wallet_address,total_balance_usd,num_tokens,tokens_held,customer_name,email,segm
 0xf7671079cb4debdb18ce36f44dd493d9a7dfdcf5,11.518688,1.0,ADDY_PROD,,susanamanhood@ug.uchile.cl,retail,polygon,0.0,0,,,Sin movimiento,0.0
 0x57b1cbf481c090e49c75979938f4a740750bafe2,11.518688,1.0,ADDY_PROD,,carmen.calderon@latam.com,retail,polygon,0.0,0,,,Sin movimiento,0.0
 0xa044f7f40f5aae78c845c1632e658f20da597c5e,11.518688,1.0,ADDY_PROD,,ivan.elizondo@outlook.com,retail,polygon,0.0,0,,,Sin movimiento,0.0
-0x84996fd9169628581b471ab024de7498955c9c5b,11.518688,1.0,ADDY_PROD,,lorena.quevedo.sc@gmail.com,retail,polygon,227.2654488611499,1,2026-04-02 14:46:07+00:00,ABAL,Retiro parcial,95.18
+0x84996fd9169628581b471ab024de7498955c9c5b,11.518688,1.0,ADDY_PROD,,lorena.quevedo.sc@gmail.com,retail,polygon,227.26544886114996,1,2026-04-02 14:46:07+00:00,ABAL,Retiro parcial,95.18
 0xaa5d901c02b32a2e9f21a56da183dcc44b228617,11.518688,1.0,ADDY_PROD,,joaquin.guillier@gmail.com,retail,polygon,0.0,0,,,Sin movimiento,0.0
 0xab792aeb4bf6f8f12709698298c45e5e63bcfbb0,11.518688,1.0,ADDY_PROD,,taladie8@gmail.com,retail,polygon,0.0,0,,,Sin movimiento,0.0
 0x47cab9843f3b6d173641a86034e7b4e3109630ae,11.518688,1.0,ADDY_PROD,,roxanacastillocayupe.j@gmail.com,retail,polygon,0.0,0,,,Sin movimiento,0.0
@@ -1321,7 +1321,7 @@ wallet_address,total_balance_usd,num_tokens,tokens_held,customer_name,email,segm
 0x170d308679949b706aa7d83512bed14961f954a9,0.2424422944773407,1.0,ABAL,,alejandravillarro2020@gmail.com,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
 0x8d1ff63782e80782c6e6a6f536a15b960fd43334,0.24204177695432078,1.0,ADDY_PROD,,ragj97@gmail.com,retail,polygon,9.014597056394662,1,2026-04-20 17:17:24+00:00,AAGG,Retirado completamente,97.39
 0x99b285483841b1125c938d4468cf6dd3c6308c76,0.23889482699694742,1.0,ABDY_PROD,,c.donosoprez@gmail.com,retail,polygon,289.3276988547832,1,2026-04-09 18:21:49+00:00,AAGG,Retirado completamente,99.92
-0x15ac407378ddbdd3799271550feb4c7eea70003d,0.23740665250654333,1.0,AAGG,,sandracartagen@gmail.com,retail,polygon,45.55764459384896,1,2026-04-14 14:59:45+00:00,ABDY_PROD,Retirado completamente,99.48
+0x15ac407378ddbdd3799271550feb4c7eea70003d,0.23740665250654333,1.0,AAGG,,sandracartagen@gmail.com,retail,polygon,45.55764459384897,1,2026-04-14 14:59:45+00:00,ABDY_PROD,Retirado completamente,99.48
 0x66dca81139a5fd7e3b5fab82d467ed0ec808d9bb,0.23529249067499997,1.0,AP60,,luisdelahoz+100@arch.finance,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
 0xc510d5ba989e3323fcd8644609ebcfea3e23bfbe,0.23140262210088594,1.0,ACAI_PROD,,carlossottoalberto@gmail.com,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
 0x7a4068d4110041cdff0040b17debbb6c27e39746,0.23110038781542183,1.0,AMOD,,karo.guerra44@gmail.com,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
@@ -1411,7 +1411,7 @@ wallet_address,total_balance_usd,num_tokens,tokens_held,customer_name,email,segm
 0x2c957ef96a4361ef4e711b4c175028a6a000095a,0.05277030022713301,1.0,CHAIN_PROD,,mcp.arcos@gmail.com,retail,polygon,36.45564939693558,2,2026-04-07 04:28:09+00:00,"ADDY_PROD, AEDY_PROD",Retirado completamente,99.86
 0xd768e59343a8936c47336410e6c44f481b669561,0.05151648304112515,1.0,ABDY_PROD,,manuel.rolando.perez.barria@gmail.com,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
 0x03ee7ff02a4e88ddc05ddd795a8aa855c5f0ea31,0.04641013259125622,1.0,ADDY_PROD,,thiagovalenpi@gmail.com,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
-0xaa9faa9fce7b2834156025a81a7b0242b872cf24,0.04575606581130058,1.0,CHAIN_PROD,,j.fraso.c@gmail.com,retail,polygon,22.822138985607324,1,2026-04-22 12:22:54+00:00,AAGG,Retirado completamente,99.8
+0xaa9faa9fce7b2834156025a81a7b0242b872cf24,0.04575606581130058,1.0,CHAIN_PROD,,j.fraso.c@gmail.com,retail,polygon,22.822138985607328,1,2026-04-22 12:22:54+00:00,AAGG,Retirado completamente,99.8
 0x1b14954a9a591ddabcd74edb4328909a9337c979,0.04501893960665404,1.0,ADDY_PROD,,rubentrabajo0421@gmail.com,retail,polygon,59.7747954542194,1,2026-04-16 16:18:16+00:00,AAGG,Retirado completamente,99.92
 0x40566406282ad135d4a91ee35e2e6829dbf220f9,0.044089611229369524,1.0,ADDY_PROD,,danigar16@yahoo.es,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
 0xff49d9c229086a94ecedf1d18784b8b7d86b30b6,0.04403403075491408,1.0,ADDY_PROD,,jonathanlimp@gmail.com,retail,polygon,1215.8073104334565,1,2026-04-01 16:32:11+00:00,AAGG,Retirado completamente,100.0
@@ -1465,7 +1465,7 @@ wallet_address,total_balance_usd,num_tokens,tokens_held,customer_name,email,segm
 0x58516201dc2a307ba59e68528e6e1d795e7a7c86,0.0,,,,lmene001@gmail.com,retail,polygon,256.4226580911863,3,2026-04-08 14:14:11+00:00,"AAGG, ADDY_PROD, AEDY_PROD",Retirado completamente,100.0
 0x33ffb7249b267359071ebe3166fed08931aa3e93,0.0,,,,mivicente@uc.cl,retail,polygon,2256.9829961464297,3,2026-04-24 20:05:14+00:00,"AAGG, ABDY_PROD, WEB3_PROD",Retirado completamente,100.0
 0x699a5d2bd7ccdf6ba0a0ce0a93ac1820074ade1b,0.0,,,,asencio@vtr.net,retail,polygon,7.0712289693620205,1,2026-04-09 15:41:49+00:00,AAGG,Retirado completamente,100.0
-0x82d55c4b3f14930e7b374fa4c974d8480df0e108,0.0,,,,litasantamaria@gmail.com,retail,polygon,4649.431863035758,1,2026-04-28 23:36:02+00:00,ABDY_PROD,Retirado completamente,100.0
+0x82d55c4b3f14930e7b374fa4c974d8480df0e108,0.0,,,,litasantamaria@gmail.com,retail,polygon,4649.431863035759,1,2026-04-28 23:36:02+00:00,ABDY_PROD,Retirado completamente,100.0
 0xf18e2b32dbba307d5839c97d6b5f214cbee6eafd,0.0,,,,cugatti@gmail.com,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
 0xf6a38e820ccb7c3d7f825fc0f2e324fd5166844e,0.0,,,,seretamal@gmail.com,retail,polygon,5851.2546764194985,4,2026-04-07 19:38:59+00:00,"AAGG, ABDY_PROD, ADDY_PROD, CHAIN_PROD",Retirado completamente,100.0
 0x8282cb487e05bfdf0a26fc9f3c768d1dbad3acc7,0.0,,,,jaguirrealamo@gmail.com,retail,polygon,5520.224762668022,4,2026-04-07 00:29:19+00:00,"AAGG, ABDY_PROD, AEDY_PROD, CHAIN_PROD",Retirado completamente,100.0
@@ -1565,7 +1565,7 @@ wallet_address,total_balance_usd,num_tokens,tokens_held,customer_name,email,segm
 0xd17d979f1a7b21a8881174200625f6bdd01eb7af,0.0,,,,monicaesperanzamendieta.moreno@gmail.com,retail,polygon,218.47673782274802,3,2026-04-01 16:46:39+00:00,"AAGG, ABDY_PROD, AMOD",Retirado completamente,100.0
 0x45beaffd0e7490673ce1de605b6094a02e6cbf42,0.0,,,,aleaxiemanager@gmail.com,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
 0x5f18aec9fc46b3ffdfb83c2273abf8d18d318fba,0.0,,,,meli.musri@gmail.com,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
-0xf109990bf10ea6d42d3c08a4d7e53ef91faa0d25,0.0,,,Juan Pablo Cuevas,jpc.pva@gmail.com,preferente,polygon,2293.775605654404,1,2026-04-01 21:17:15+00:00,AAGG,Retirado completamente,100.0
+0xf109990bf10ea6d42d3c08a4d7e53ef91faa0d25,0.0,,,Juan Pablo Cuevas,jpc.pva@gmail.com,preferente,polygon,2293.7756056544035,1,2026-04-01 21:17:15+00:00,AAGG,Retirado completamente,100.0
 0xfd58e234a42bbb50ede5d9222f88e406f482d5be,0.0,,,HA Consultores SpA,faguero@haconsultores.cl,preferente,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
 0xfa4d2c016f22e9da452dbfbbf35fc8fc30916907,0.0,,,German Eggers,​geggers@uach.cl,preferente,polygon,20444.697263897135,2,2026-04-08 13:58:53+00:00,"AAGG, WEB3_PROD",Retirado completamente,100.0
 0xf73e8990f1f30719016e900f555fc47c212679c6,0.0,,,Oscar Lama,olamaq@gmail.com,preferente,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
@@ -1781,7 +1781,7 @@ wallet_address,total_balance_usd,num_tokens,tokens_held,customer_name,email,segm
 0x8cbcc198a11ab2f6c4f06ed94299c3414a044d1d,0.0,,,,joamorey1989@gmail.com,retail,polygon,0.0,0,,,Sin saldo (sin retiro detectado),0.0
 0x63a2330258c999274c1d3d67579fdc3f25225e53,0.0,,,,elines.larez@gmail.com,retail,polygon,23.628926077789995,2,2026-04-22 19:04:44+00:00,"ABDY_PROD, AMOD",Retirado completamente,100.0
 0x7459363d3c7b406d40b061a7a52e47cde9dff9cf,0.0,,,,eydercastilla2002@gmail.com,retail,polygon,23.20713368067249,1,2026-04-09 17:09:25+00:00,ABAL,Retirado completamente,100.0
-0xa9c719315603079c921c8e8faa048f4a2e6e5296,0.0,,,,keam80@gmail.com,retail,polygon,23.64105755071321,1,2026-04-18 21:33:08+00:00,ABAL,Retirado completamente,100.0
+0xa9c719315603079c921c8e8faa048f4a2e6e5296,0.0,,,,keam80@gmail.com,retail,polygon,23.641057550713214,1,2026-04-18 21:33:08+00:00,ABAL,Retirado completamente,100.0
 0x9b2a6ce8728c0eb90179f5dc893d13464b417c81,0.0,,,,fdo.jaureguizar@gmail.com,retail,polygon,21.82644785529099,1,2026-04-10 01:05:23+00:00,AMOD,Retirado completamente,100.0
 0xce0f313e881ef96c2db45590ffcc0f996e34e2c2,0.0,,,Joaquín Donoso García-Huidobro,donosogh@gmail.com,preferente,polygon,35333.077533510266,3,2026-04-14 16:13:43+00:00,"AAGG, AEDY_PROD, CHAIN_PROD",Retirado completamente,100.0
 0xfe54e2b7381c62c3ee370d8290603e81d477bdb6,0.0,,,,francisco.lopezroualdes@gmail.com,retail,polygon,3807.8516545770367,1,2026-04-21 02:19:30+00:00,AAGG,Retirado completamente,100.0
@@ -1848,7 +1848,7 @@ wallet_address,total_balance_usd,num_tokens,tokens_held,customer_name,email,segm
 0x4ea4af72c20bb5093b2a34674baed6d8d5c6d028,0.0,,,,claucastro11@yahoo.es,retail,polygon,143.1509696060418,2,2026-04-06 14:10:31+00:00,"ABDY_PROD, CHAIN_PROD",Retirado completamente,100.0
 0xde565686f2e7d16ce856093257bc5650b31c38ba,0.0,,,,nicolas.valdes1984@gmail.com,retail,polygon,139.27337443210345,1,2026-04-05 13:39:07+00:00,AAGG,Retirado completamente,100.0
 0xddb8bd750f77026c0de1f5f1d61d5fa5ca65cfc4,0.0,,,,andrescg10@hotmail.com,retail,polygon,164.57137197088673,4,2026-04-08 16:46:37+00:00,"AAGG, ABDY_PROD, ACAI_PROD, AEDY_PROD",Retirado completamente,100.0
-0xa52e60ead4accc57fdf10436e5b50d766cb54f91,0.0,,,,michelleam.03@gmail.com,retail,polygon,159.69987020478425,3,2026-04-27 22:37:28+00:00,"ABDY_PROD, ADDY_PROD, AEDY_PROD",Retirado completamente,100.0
+0xa52e60ead4accc57fdf10436e5b50d766cb54f91,0.0,,,,michelleam.03@gmail.com,retail,polygon,159.69987020478422,3,2026-04-27 22:37:28+00:00,"ABDY_PROD, ADDY_PROD, AEDY_PROD",Retirado completamente,100.0
 0xd1a28efb6921add74afb539d743a3e0a6d6f0ac6,0.0,,,,crazymoonchile@gmail.com,retail,polygon,35.32125139873467,2,2026-04-04 16:00:53+00:00,"ABDY_PROD, ADDY_PROD",Retirado completamente,100.0
 0x4778721f39d5c63442486ab512a74dac6c13bbc5,0.0,,,,ricardoarancibia2102@gmail.com,retail,polygon,113.04220263615161,2,2026-04-06 04:09:59+00:00,"AAGG, ADDY_PROD",Retirado completamente,100.0
 0x251a4874d3784082352b006a96ccb8546aa3a702,0.0,,,,carla.esp.mand@gmail.com,retail,polygon,118.48207717156855,1,2026-04-21 01:36:54+00:00,ABDY_PROD,Retirado completamente,100.0
@@ -2075,7 +2075,7 @@ wallet_address,total_balance_usd,num_tokens,tokens_held,customer_name,email,segm
 0x24d90d2be08c74792f6ba20570415890c4c33489,0.0,,,Ignacio Binimelis,ibinimelis@ldg.cl,preferente,ethereum,0.0,0,,,Sin saldo (sin retiro detectado),0.0
 0xf86ed833907f91b03d76ea1edf620f724dee2422,0.0,,,,kelvin_vicente1@hotmail.com,retail,polygon,88.82543486126106,1,2026-04-20 23:11:00+00:00,CHAIN_PROD,Retirado completamente,100.0
 0x9510ad43c5eb77d25e927968cfdca007c8f9e301,0.0,,,,loretomr7@gmail.com,retail,polygon,89.706497416068,2,2026-04-01 21:06:25+00:00,"AAGG, ABDY_PROD",Retirado completamente,100.0
-0xc257ccade1e98690ef4c85791cbce0aed042aa07,0.0,,,,corellanaleiva@gmail.com,retail,polygon,90.91241913788656,2,2026-04-06 15:42:49+00:00,"AAGG, ABDY_PROD",Retirado completamente,100.0
+0xc257ccade1e98690ef4c85791cbce0aed042aa07,0.0,,,,corellanaleiva@gmail.com,retail,polygon,90.91241913788657,2,2026-04-06 15:42:49+00:00,"AAGG, ABDY_PROD",Retirado completamente,100.0
 0x069b30ada391c3d840cba0013d9462a4185baa3d,0.0,,,,w_santana25@hotmail.com,retail,polygon,90.65356531121174,2,2026-04-08 22:07:39+00:00,"AAGG, AEDY_PROD",Retirado completamente,100.0
 0xb95e8f84fa093adbb59c0c81981d5149b04f1274,0.0,,,,jimmy.alex.suarez@gmail.com,retail,polygon,90.1891862383543,3,2026-04-18 16:29:42+00:00,"AAGG, ABDY_PROD, AMOD",Retirado completamente,100.0
 0xbad8d3a22a2fae82de3f7dd2dbf09bbc43211157,0.0,,,,trayy.sanmartin@gmail.com,retail,polygon,42.63301162325942,1,2026-04-09 18:24:33+00:00,CHAIN_PROD,Retirado completamente,100.0
