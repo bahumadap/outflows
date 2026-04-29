@@ -226,10 +226,10 @@ def render_overview(ws: pd.DataFrame):
     p_rem = pct(rem, aum)
 
     n_total    = len(ws)
-    n_active   = (ws["total_balance_usd"] > 1).sum()
     n_done     = (ws["status"] == "Retirado completamente").sum()
     n_partial  = (ws["status"] == "Retiro parcial").sum()
-    n_inactive = (ws["status"] == "Sin movimiento").sum()
+    n_withdrew = n_done + n_partial   # retiraron algo (total o parcial)
+    n_pending  = (ws["total_balance_usd"] > 1).sum()  # aún tienen saldo > $1
 
     c1, c2, c3 = st.columns(3)
 
@@ -252,17 +252,25 @@ def render_overview(ws: pd.DataFrame):
         </div>""", unsafe_allow_html=True)
 
     with c3:
-        p_done = pct(n_done, n_total)
+        p_withdrew = pct(n_withdrew, n_total)
+        p_pending  = pct(n_pending, n_total)
         st.markdown(f"""
         <div class="card">
-            <div class="t-label">Wallets · Estado</div>
-            <div class="t-value-lg">{n_active}<span style="font-size:16px;color:#4B5675"> / {n_total}</span></div>
-            {track(p_done, "track-fill-red")}
-            <div class="t-sub">
-                <span class="dot-red">●</span> {n_done} retirados ({p_done:.0f}%)&ensp;
-                <span class="dot-yellow">●</span> {n_partial} parcial&ensp;
-                <span class="dot-dim">●</span> {n_inactive} sin mov.
+            <div class="t-label">Wallets</div>
+            <div style="display:flex;gap:24px;margin:8px 0 4px 0;align-items:flex-end">
+                <div>
+                    <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#F87171;margin-bottom:2px">Retiraron</div>
+                    <div style="font-size:28px;font-weight:700;color:#F87171;line-height:1">{n_withdrew}</div>
+                    <div style="font-size:11px;color:#4B5675;margin-top:2px">{p_withdrew:.0f}% del total · {n_done} completo · {n_partial} parcial</div>
+                </div>
+                <div style="width:1px;background:#1C2333;align-self:stretch;margin-bottom:4px"></div>
+                <div>
+                    <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#3DD68C;margin-bottom:2px">Pendientes</div>
+                    <div style="font-size:28px;font-weight:700;color:#3DD68C;line-height:1">{n_pending}</div>
+                    <div style="font-size:11px;color:#4B5675;margin-top:2px">{p_pending:.0f}% del total · con saldo &gt; $1</div>
+                </div>
             </div>
+            <div style="font-size:11px;color:#4B5675;margin-top:6px">{n_total:,} wallets totales</div>
         </div>""", unsafe_allow_html=True)
 
     # ── Price strip ───────────────────────────────────────────────────────────
@@ -1437,36 +1445,35 @@ def render_tables(ws: pd.DataFrame, balances: pd.DataFrame, outflows: pd.DataFra
 
         # ── 3. Contratos Operacionales ────────────────────────────────────────
         st.markdown('<div class="section-title">Contratos Operacionales</div>', unsafe_allow_html=True)
+        # Columns: (Nombre, POL address, ETH address, Descripción, Estado)
+        # "N/A" = no existe en esa red
         operational = [
-            ("Arch Ramp",              "0x6eEabA794883F75a1e6E9a38426207e853a6Df58", "POL", "On & OffRamps",           "🏄‍♂️ Active"),
-            ("Gasworks",               "0xf67df2fd4a56046eacf03e3762b2495cfdedf271", "POL", "User Operations",         "🏄‍♂️ Active"),
-            ("Migration Escrow",       "0xbc13b615c6630326a15e312c345619da756226a1", "POL", "Products Migration",      "🏄‍♂️ Active"),
-            ("Trade Issuer V3",        "0xdCB99117Ba207b996EE3c49eE6F8c0f1d371867A", "POL", "Swaps para issuance",     "🏄‍♂️ Active"),
-            ("Arch Nexus",             "0xfde21d887b245849e2509163582ce0bbc90fcc4c", "POL", "Contract Calls",          "🏄‍♂️ Active"),
-            ("Archemist God",          "0xE1E9568B9F735Cafb282BB164687d4c37587Bf90", "POL", "Archemist Factory",       "🏄‍♂️ Active"),
-            ("Backoffice Login",       "0xb2709612c105b86c44Ba0150456E47ca248d7685", "POL", "Backoffice Login",        "🏄‍♂️ Active"),
-            ("Structured Funds Factory","0xb3F2cC719dCadcA9133074aa37964Cb972FB3d82","POL","Factory structured funds", "🏄‍♂️ Active"),
-            ("CEX Ramp",               "0x3Ddd928a5d1be641C0bF2727a078f1342a1A6c0E", "POL", "CEX Ramps",               "🏄‍♂️ Active"),
-            ("Koywe Ramp",             "0xD461ECAC15CC2891a588cE283933065d1125Db6c", "POL", "OnRamps",                 "🏄‍♂️ Active"),
-            ("Koywe OffRamp",          "0xa8b21F3cbC89E6D88f31b9486aa5A5C37560E471","POL", "OffRamps",                "🏄‍♂️ Active"),
-            ("Gasless",                "0x9Ea1f32A606A2956345444AA7c0DCfe6CcAB30F4", "POL", "Products Exchange",       "🏄‍♂️ Active"),
-            ("Faucet",                 "0x66eE243E25D67DcEc02874102F68809a597060BD", "POL", "Migrations / Ramps",      "🏄‍♂️ Active"),
-            ("Referrals",              "0x217216913438Fa9E305187727963DbF595D4d796", "POL", "Referrals",               "🏄‍♂️ Active"),
-            ("Fiat Ramp (DCA)",        "0x7F7214C19A2Ad6c5A7D07d2E187DE1a008a7BEa9", "POL", "DCA / OnRamps",           "🏄‍♂️ Active"),
-            ("Development Ops",        "0xf33F0262dD37c9ae09393d09764aa363dcdC9627", "POL", "All Ops",                 "🏄‍♂️ Active"),
-            ("Liquidity Manager",      "0x131067246BBD3c94c82e0B74c71D430e81da950b", "POL", "Collect Fees",            "🏄‍♂️ Active"),
-            ("Archemist Operator",     "0x5953e8E6070287C63eE95480a4768FaA5DD3F405", "POL", "Archemists",              "🏄‍♂️ Active"),
-            ("Trade Issuer Operator",  "0xe560EfD37a77486aa0ecAed4203365BDe5363dbB", "POL", "Trade Issuer",            "🏄‍♂️ Active"),
-            ("ALPS",                   "0x0a0044E0521ccD7cd61fE4c943E2E95b149659E9", "POL", "Liquidity Position Strat","🏄‍♂️ Active"),
-            ("Arch Leverage ETH",      "0xf01c18deef438f3a5e4bb27404b4b44911625300", "POL", "Leverage ETH en AAVE",    "🏄‍♂️ Active"),
-            ("CEX Ramp",               "0x3Ddd928a5d1be641C0bF2727a078f1342a1A6c0E", "ETH", "CEX Ramps",               "🏄‍♂️ Active"),
-            ("Liquidity Manager",      "0x131067246BBD3c94c82e0B74c71D430e81da950b", "ETH", "Collect Fees",            "🏄‍♂️ Active"),
-            ("Trade Issuer V3",        "0x92b6a2AEE6c748AD196Fbfd449F87c9B2aA2e519", "ETH", "Swaps para issuance",     "🏄‍♂️ Active"),
+            ("Arch Ramp",               "0x6eEabA794883F75a1e6E9a38426207e853a6Df58", "N/A",                                        "On & OffRamps",           "🏄‍♂️ Active"),
+            ("Gasworks",                "0xf67df2fd4a56046eacf03e3762b2495cfdedf271", "N/A",                                        "User Operations",         "🏄‍♂️ Active"),
+            ("Migration Escrow",        "0xbc13b615c6630326a15e312c345619da756226a1", "N/A",                                        "Products Migration",      "🏄‍♂️ Active"),
+            ("Trade Issuer V3",         "0xdCB99117Ba207b996EE3c49eE6F8c0f1d371867A", "0x92b6a2AEE6c748AD196Fbfd449F87c9B2aA2e519", "Swaps para issuance",     "🏄‍♂️ Active"),
+            ("Arch Nexus",              "0xfde21d887b245849e2509163582ce0bbc90fcc4c", "0x8648B1E944e1322eC914E6DE015Dc660F627927C", "Contract Calls",          "🏄‍♂️ Active"),
+            ("Archemist God",           "0xE1E9568B9F735Cafb282BB164687d4c37587Bf90", "N/A",                                        "Archemist Factory",       "🏄‍♂️ Active"),
+            ("Backoffice Login",        "0xb2709612c105b86c44Ba0150456E47ca248d7685", "N/A",                                        "Backoffice Login",        "🏄‍♂️ Active"),
+            ("Structured Funds Factory","0xb3F2cC719dCadcA9133074aa37964Cb972FB3d82", "N/A",                                        "Factory structured funds","🏄‍♂️ Active"),
+            ("CEX Ramp",                "0x3Ddd928a5d1be641C0bF2727a078f1342a1A6c0E", "0x3Ddd928a5d1be641C0bF2727a078f1342a1A6c0E","CEX Ramps",               "🏄‍♂️ Active"),
+            ("Koywe Ramp",              "0xD461ECAC15CC2891a588cE283933065d1125Db6c", "N/A",                                        "OnRamps",                 "🏄‍♂️ Active"),
+            ("Koywe OffRamp",           "0xa8b21F3cbC89E6D88f31b9486aa5A5C37560E471", "N/A",                                        "OffRamps",                "🏄‍♂️ Active"),
+            ("Gasless",                 "0x9Ea1f32A606A2956345444AA7c0DCfe6CcAB30F4", "N/A",                                        "Products Exchange",       "🏄‍♂️ Active"),
+            ("Faucet",                  "0x66eE243E25D67DcEc02874102F68809a597060BD", "N/A",                                        "Migrations / Ramps",      "🏄‍♂️ Active"),
+            ("Referrals",               "0x217216913438Fa9E305187727963DbF595D4d796", "N/A",                                        "Referrals",               "🏄‍♂️ Active"),
+            ("Fiat Ramp (DCA)",         "0x7F7214C19A2Ad6c5A7D07d2E187DE1a008a7BEa9", "N/A",                                        "DCA / OnRamps",           "🏄‍♂️ Active"),
+            ("Development Ops",         "0xf33F0262dD37c9ae09393d09764aa363dcdC9627", "N/A",                                        "All Ops",                 "🏄‍♂️ Active"),
+            ("Liquidity Manager",       "0x131067246BBD3c94c82e0B74c71D430e81da950b", "0x131067246BBD3c94c82e0B74c71D430e81da950b","Collect Fees",            "🏄‍♂️ Active"),
+            ("Archemist Operator",      "0x5953e8E6070287C63eE95480a4768FaA5DD3F405", "N/A",                                        "Archemists",              "🏄‍♂️ Active"),
+            ("Trade Issuer Operator",   "0xe560EfD37a77486aa0ecAed4203365BDe5363dbB", "N/A",                                        "Trade Issuer",            "🏄‍♂️ Active"),
+            ("ALPS",                    "0x0a0044E0521ccD7cd61fE4c943E2E95b149659E9", "N/A",                                        "Liquidity Position Strat","🏄‍♂️ Active"),
+            ("Arch Leverage ETH",       "0xf01c18deef438f3a5e4bb27404b4b44911625300", "N/A",                                        "Leverage ETH en AAVE",    "🏄‍♂️ Active"),
         ]
-        t = f"<table style='width:100%;border-collapse:collapse'><thead><tr><th {TH}>Nombre</th><th {TH}>Address</th><th {TH}>Red</th><th {TH}>Descripción</th><th {TH}>Estado</th></tr></thead><tbody>"
-        for name, addr, net, desc, state in operational:
-            t += (f"<tr><td {TDM}>{name}</td><td {TDA}>{scan_link(addr,net)}</td>"
-                  f"<td {TD}>{net}</td><td {TD}>{desc}</td><td {TD}>{state_badge(state)}</td></tr>")
+        t = f"<table style='width:100%;border-collapse:collapse'><thead><tr><th {TH}>Nombre</th><th {TH}>POL Address</th><th {TH}>ETH Address</th><th {TH}>Descripción</th><th {TH}>Estado</th></tr></thead><tbody>"
+        for name, pol, eth, desc, state in operational:
+            t += (f"<tr><td {TDM}>{name}</td><td {TDA}>{scan_link(pol,'POL')}</td>"
+                  f"<td {TDA}>{scan_link(eth,'ETH')}</td><td {TD}>{desc}</td><td {TD}>{state_badge(state)}</td></tr>")
         st.markdown(t + "</tbody></table>", unsafe_allow_html=True)
 
         # ── 4. Chamber Ecosystem ──────────────────────────────────────────────
