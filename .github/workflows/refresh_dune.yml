@@ -1,0 +1,24 @@
+name: Refresh Dune Cache
+
+on:
+  workflow_dispatch:  # MANUAL ONLY — corre las 7 queries de Dune (consume creditos)
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Refresh Dune queries
+        env:
+          DUNE_API_KEY: ${{ secrets.DUNE_API_KEY }}
+        run: python run_queries.py
